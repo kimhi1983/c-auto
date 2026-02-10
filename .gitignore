@@ -1,0 +1,9 @@
+node_modules/
+.env
+__pycache__/
+data/*.xlsx
+*.pyc
+.vscode/
+.idea/
+*.log
+.DS_Store

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C-Auto 업무 자동화 시스템</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card p {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        #result-area {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            color: #333;
+            min-height: 50px;
+            display: none;
+        }
+
+        #result-area.show {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            background: #4caf50;
+            color: white;
+        }
+
+        .api-links {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .api-links h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .api-links a {
+            display: block;
+            color: #667eea;
+            text-decoration: none;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 8px;
+            transition: background 0.3s ease;
+        }
+
+        .api-links a:hover {
+            background: #f0f0f0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 C-Auto 업무 자동화 시스템</h1>
+            <p>AI 기반 이메일 분석 및 업무 관리 플랫폼</p>
+            <div style="margin-top: 15px;">
+                <span class="status-badge">● 시스템 정상 작동 중</span>
+            </div>
+        </header>
+
+        <div class="dashboard">
+            <div class="card">
+                <h3>📧 스마트 이메일 분석</h3>
+                <p>Hiworks 메일함에서 최신 이메일을 가져와 AI가 자동으로 분류하고 답신 초안을 작성합니다.</p>
+                <button onclick="runEmailBot()">메일 분석 실행</button>
+                <div id="result-area"></div>
+            </div>
+
+            <div class="card">
+                <h3>💬 AI 채팅</h3>
+                <p>Claude AI와 직접 대화하여 업무 관련 질문을 하거나 도움을 받을 수 있습니다.</p>
+                <input type="text" id="ai-query" placeholder="질문을 입력하세요..."
+                    style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 8px; margin-bottom: 10px;">
+                <button onclick="askAI()">AI에게 질문하기</button>
+                <div id="ai-result"></div>
+            </div>
+
+            <div class="card" style="border-left: 5px solid #e67e22;">
+                <h3>🚀 통합 업무 자동화</h3>
+                <p>메일 확인부터 파일 정리까지 한 번에 실행합니다.</p>
+                <button onclick="startIntegration()" id="run-btn" style="background:#e67e22;">통합 프로세스 시작</button>
+
+                <div id="progress-status" style="margin-top:20px; display:none;">
+                    <progress id="p-bar" value="0" max="100" style="width:100%; height:25px;"></progress>
+                    <div id="log-window"
+                        style="background:#333; color:#fff; padding:15px; border-radius:5px; margin-top:10px; font-family:monospace; font-size:0.9em; max-height:200px; overflow-y:auto;">
+                        대기 중...
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📊 재고 관리</h3>
+                <p>입출고 데이터를 기록하고 실시간 재고 현황을 파악합니다.</p>
+                <button onclick="alert('재고 관리 모듈 개발 예정')">재고 확인</button>
+            </div>
+
+            <div class="card">
+                <h3>🔍 파일 검색</h3>
+                <p>Dropbox에서 파일을 검색합니다 (보안 폴더 제외).</p>
+                <input type="text" id="search-keyword" placeholder="검색할 파일명 입력..."
+                    style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 8px; margin-bottom: 10px;">
+                <button onclick="searchFiles()">파일 검색</button>
+                <div id="search-result"></div>
+            </div>
+        </div>
+
+        <div class="api-links">
+            <h3>🔗 API 엔드포인트</h3>
+            <a href="/docs" target="_blank">📚 API 문서 (Swagger UI)</a>
+            <a href="/check-emails" target="_blank">📧 이메일 확인 API</a>
+            <a href="/ai-chat?query=안녕하세요" target="_blank">💬 AI 채팅 API</a>
+        </div>
+    </div>
+
+    <script>
+        async function runEmailBot() {
+            const resultArea = document.getElementById('result-area');
+            resultArea.classList.add('show');
+            resultArea.innerHTML = '<div class="loading"></div> 이메일 분석 중...';
+
+            try {
+                const res = await fetch('/check-emails');
+                const data = await res.json();
+
+                if (data.status === 'success' && data.data) {
+                    const emailData = data.data;
+                    resultArea.innerHTML = `
+                        <strong>✅ 분석 완료!</strong><br><br>
+                        <strong>📬 총 메일 수:</strong> ${emailData.total_emails}개<br>
+                        <strong>📨 제목:</strong> ${emailData.subject || 'N/A'}<br>
+                        <strong>🏷️ 분류:</strong> ${emailData.category || 'N/A'}<br>
+                        <strong>✍️ 답신 초안:</strong><br>
+                        <div style="background: white; padding: 10px; border-radius: 5px; margin-top: 10px;">
+                            ${emailData.response_draft || 'N/A'}
+                        </div>
+                    `;
+                } else {
+                    resultArea.innerHTML = `<strong>⚠️ 오류:</strong> ${JSON.stringify(data)}`;
+                }
+            } catch (error) {
+                resultArea.innerHTML = `<strong>❌ 오류 발생:</strong> ${error.message}`;
+            }
+        }
+
+        async function askAI() {
+            const query = document.getElementById('ai-query').value;
+            const resultArea = document.getElementById('ai-result');
+
+            if (!query) {
+                alert('질문을 입력해주세요!');
+                return;
+            }
+
+            resultArea.classList.add('show');
+            resultArea.innerHTML = '<div class="loading"></div> AI가 답변 생성 중...';
+
+            try {
+                const res = await fetch(`/ai-chat?query=${encodeURIComponent(query)}`);
+                const data = await res.json();
+
+                resultArea.innerHTML = `
+                    <strong>🤖 AI 답변:</strong><br>
+                    <div style="background: white; padding: 10px; border-radius: 5px; margin-top: 10px;">
+                        ${data.answer}
+                    </div>
+                `;
+            } catch (error) {
+                resultArea.innerHTML = `<strong>❌ 오류 발생:</strong> ${error.message}`;
+            }
+        }
+
+        // Enter 키로 AI 질문 실행
+        document.getElementById('ai-query').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                askAI();
+            }
+        });
+
+        // Enter 키로 파일 검색 실행
+        document.getElementById('search-keyword').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                searchFiles();
+            }
+        });
+
+        async function searchFiles() {
+            const keyword = document.getElementById('search-keyword').value;
+            const resultArea = document.getElementById('search-result');
+
+            if (!keyword) {
+                alert('검색할 파일명을 입력해주세요!');
+                return;
+            }
+
+            resultArea.classList.add('show');
+            resultArea.innerHTML = '<div class="loading"></div> 파일 검색 중...';
+
+            try {
+                const res = await fetch(`/search-files?keyword=${encodeURIComponent(keyword)}&max_results=20`);
+                const data = await res.json();
+
+                if (data.error) {
+                    resultArea.innerHTML = `<strong>❌ 오류:</strong> ${data.error}`;
+                    return;
+                }
+
+                if (data.total_found === 0) {
+                    resultArea.innerHTML = `<strong>🔍 검색 결과:</strong> "${keyword}"와 일치하는 파일을 찾을 수 없습니다.`;
+                    return;
+                }
+
+                let filesHtml = `<strong>✅ ${data.total_found}개의 파일 발견!</strong><br><br>`;
+                data.files.forEach((file, index) => {
+                    filesHtml += `
+                        <div style="background: white; padding: 10px; border-radius: 5px; margin: 5px 0;">
+                            <strong>${index + 1}. ${file.name}</strong><br>
+                            <small style="color: #666;">크기: ${file.size_mb} MB</small><br>
+                            <small style="color: #999;">${file.path}</small>
+                        </div>
+                    `;
+                });
+
+                resultArea.innerHTML = filesHtml;
+            } catch (error) {
+                resultArea.innerHTML = `<strong>❌ 오류 발생:</strong> ${error.message}`;
+            }
+        }
+
+        async function runIntegration() {
+            const resultArea = document.getElementById('integration-result');
+            resultArea.classList.add('show');
+            resultArea.innerHTML = '<div class="loading"></div> 통합 자동화 실행 중...';
+
+            try {
+                const res = await fetch('/run-integration', { method: 'POST' });
+                const data = await res.json();
+
+                if (data.status === 'error') {
+                    resultArea.innerHTML = `<strong>❌ 오류:</strong> ${data.message}`;
+                    return;
+                }
+
+                if (data.message) {
+                    resultArea.innerHTML = `<strong>ℹ️ ${data.message}</strong>`;
+                    return;
+                }
+
+                let resultsHtml = '<strong>✅ 자동화 완료!</strong><br><br>';
+                data.data.forEach((item, index) => {
+                    resultsHtml += `
+                        <div style="background: white; padding: 10px; border-radius: 5px; margin: 5px 0;">
+                            <strong>📧 ${item.subject}</strong><br>
+                            <small style="color: #666;">키워드: ${item.keyword}</small><br>
+                            <small style="color: #28a745;">${item.action}</small>
+                        </div>
+                    `;
+                });
+
+                resultArea.innerHTML = resultsHtml;
+            } catch (error) {
+                resultArea.innerHTML = `<strong>❌ 오류 발생:</strong> ${error.message}`;
+            }
+        }
+
+        async function startIntegration() {
+            const btn = document.getElementById('run-btn');
+            const log = document.getElementById('log-window');
+            const statusDiv = document.getElementById('progress-status');
+            const progressBar = document.getElementById('p-bar');
+
+            btn.disabled = true;
+            statusDiv.style.display = 'block';
+            log.innerHTML = "> 하이웍스 서버 접속 중...<br>";
+            progressBar.value = 20;
+
+            try {
+                log.innerHTML += "> 메일 수신 중...<br>";
+                progressBar.value = 40;
+
+                const response = await fetch('/run-integration', { method: 'POST' });
+                const result = await response.json();
+
+                log.innerHTML += "> AI 분석 및 파일 검색 중...<br>";
+                progressBar.value = 70;
+
+                if (result.data) {
+                    log.innerHTML += "> AI 분석 및 파일 검색 완료!<br>";
+                    progressBar.value = 100;
+                    result.data.forEach(item => {
+                        log.innerHTML += `<span style="color:#00ff00;">[결과] ${item.subject} -> ${item.action}</span><br>`;
+                    });
+                } else {
+                    log.innerHTML += "> 새로운 업무가 없습니다.<br>";
+                    progressBar.value = 100;
+                }
+            } catch (e) {
+                log.innerHTML += `<span style="color:red;">> 오류 발생: ${e}</span>`;
+                progressBar.value = 0;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+
+</html>

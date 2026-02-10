@@ -1,0 +1,18 @@
+c-auto/
+├── app/                # 백엔드 및 주요 로직 (FastAPI/Python)
+│   ├── main.py         # 프로그램 실행 메인 파일
+│   ├── api/            # API 엔드포인트 (백엔드 확장용)
+│   ├── core/           # 공통 설정 (Gemini/Claude API 연결 등)
+│   ├── modules/        # 핵심 기능 단위
+│   │   ├── inventory.py    # 재고 관리 로직
+│   │   ├── email_bot.py    # 이메일 분류 및 자동 답신
+│   │   ├── chat_logger.py  # 오픈채팅 기록 로직
+│   │   └── file_search.py  # 로컬 드라이브 검색
+│   └── utils/          # 엑셀 저장 및 공통 도구
+├── frontend/           # 프론트엔드 (향후 React/Next.js 등 확장용)
+├── data/               # (로컬 전용) 엑셀 및 결과물 저장 폴더
+├── tests/              # 테스트 코드
+├── .env                # API 키, 로컬 경로 등 환경 변수 (보안 주의!)
+├── .gitignore          # 깃허브 제외 파일 설정
+├── README.md           # 아까 작성한 기획서
+└── requirements.txt    # 설치 필요한 라이브러리 목록
