@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from app.modules.email_bot import fetch_hiworks_emails, fetch_and_record_emails
 from app.modules.file_search import search_files_with_permission, save_to_ai_folder, get_ai_folder_contents, initialize_ai_folder
 from app.modules.excel_logger import save_mail_to_excel, get_work_log
+from app.modules.inventory import get_current_inventory, record_inventory_transaction
 from app.core.ai_selector import ask_claude
 import uvicorn
 import os
@@ -70,6 +71,46 @@ def work_log():
     """업무 처리 기록 조회"""
     result = get_work_log()
     return result
+
+@app.get("/api/inventory")
+def get_inventory():
+    """현재 재고 현황 조회"""
+    inventory = get_current_inventory()
+    if inventory is None:
+        return {"status": "error", "message": "재고 파일을 찾을 수 없습니다."}
+    return {"status": "success", "data": inventory}
+
+@app.post("/api/inventory/transaction")
+def add_inventory_transaction(item_name: str, quantity: int, transaction_type: str, note: str = ""):
+    """재고 입출고 기록
+    
+    Args:
+        item_name: 품목명
+        quantity: 수량
+        transaction_type: '입고' 또는 '출고'
+        note: 비고 (선택)
+    """
+    if transaction_type not in ['입고', '출고']:
+        return {"status": "error", "message": "transaction_type은 '입고' 또는 '출고'여야 합니다."}
+    
+    success = record_inventory_transaction(item_name, quantity, transaction_type, note)
+    
+    if success:
+        return {
+            "status": "success", 
+            "message": f"{item_name} {quantity}개 {transaction_type} 처리 완료"
+        }
+    else:
+        return {"status": "error", "message": "입출고 기록 실패"}
+
+@app.get("/inventory-status")
+async def inventory_status():
+    """재고 현황 조회 (추가 엔드포인트)"""
+    data = get_current_inventory()
+    if data:
+        return {"status": "success", "data": data}
+    return {"status": "error", "message": "재고 파일을 찾을 수 없습니다."}
+
 
 @app.post("/run-integration")
 async def run_integration():
