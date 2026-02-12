@@ -40,10 +40,18 @@ export default function LoginPage() {
       const data = await response.json();
       console.log('로그인 성공! 토큰:', data.access_token);
 
+      if (!data.access_token) {
+        throw new Error('토큰이 없습니다');
+      }
+
       localStorage.setItem('access_token', data.access_token);
       console.log('토큰 저장 완료, 대시보드로 이동...');
 
-      router.push('/dashboard');
+      // 로그인 성공 알림
+      alert('로그인 성공! 대시보드로 이동합니다.');
+
+      // 대시보드로 강제 이동
+      window.location.href = '/dashboard';
     } catch (err) {
       console.error('로그인 에러:', err);
       setError('이메일 또는 비밀번호가 올바르지 않습니다.');
