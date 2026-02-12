@@ -30,7 +30,8 @@ export default function LoginPage() {
       formData.append('username', email);
       formData.append('password', password);
 
-      const response = await fetch('http://localhost:8001/api/v1/auth/login', {
+      // 상대 경로 사용 → Next.js가 백엔드로 프록시
+      const response = await fetch('/api/v1/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -39,7 +40,8 @@ export default function LoginPage() {
       });
 
       if (!response.ok) {
-        throw new Error('로그인 실패');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || '로그인 실패');
       }
 
       const data = await response.json();
@@ -60,9 +62,8 @@ export default function LoginPage() {
 
       // 대시보드로 이동
       window.location.href = '/dashboard';
-    } catch (err) {
-      console.error('로그인 에러:', err);
-      setError('이메일 또는 비밀번호가 올바르지 않습니다.');
+    } catch (err: any) {
+      setError(err.message || '이메일 또는 비밀번호가 올바르지 않습니다.');
       setLoading(false);
     }
   };

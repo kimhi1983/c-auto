@@ -75,7 +75,7 @@ async def startup_event():
     애플리케이션 시작 시 실행
     """
     logger.info("=== C-Auto 서버 시작 ===")
-    logger.info("Phase 1: 인증 시스템 활성화")
+    logger.info("Phase 2: 전체 기능 통합 완료")
     logger.info("API 문서: http://localhost:8000/docs")
     logger.info("Next.js 개발 서버: cd frontend-next && npm run dev")
 
