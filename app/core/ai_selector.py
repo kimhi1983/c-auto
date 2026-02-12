@@ -10,13 +10,13 @@ from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-def ask_claude(prompt: str, model: str = "claude-3-5-sonnet-20240620") -> str:
+def ask_claude(prompt: str, model: str = "claude-3-5-sonnet-latest") -> str:
     """
     Anthropic Claude 모델에 질문하고 응답 받기
 
     Args:
         prompt: 질문 내용
-        model: 사용할 모델 (기본값: claude-3-5-sonnet-20240620)
+        model: 사용할 모델 (기본값: claude-3-5-sonnet-latest)
 
     Returns:
         str: AI 응답 텍스트
