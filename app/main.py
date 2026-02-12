@@ -45,10 +45,14 @@ app = FastAPI(
     version="2.0.0-phase1"
 )
 
-# CORS 설정 (필요시)
+# CORS 설정 (프론트엔드와의 통신 허용)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",  # Next.js 개발 서버
+        "http://localhost:8000",  # 백엔드 자체
+        "https://c-auto.kimhi1983.com",  # 프로덕션 도메인
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

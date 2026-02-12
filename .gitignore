@@ -7,3 +7,9 @@ data/*.xlsx
 .idea/
 *.log
 .DS_Store
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
