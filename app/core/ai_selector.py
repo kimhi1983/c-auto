@@ -44,13 +44,13 @@ def ask_claude(prompt: str, model: str = "claude-3-5-sonnet-20241022") -> str:
         logger.error(f"Claude API 호출 오류: {e}", exc_info=True)
         return f"Claude 오류: {str(e)}"
 
-def ask_gemini(prompt: str, model: str = "gemini-pro") -> str:
+def ask_gemini(prompt: str, model: str = "gemini-1.5-flash") -> str:
     """
     Google Gemini 모델에 질문하고 응답 받기
 
     Args:
         prompt: 질문 내용
-        model: 사용할 모델 (기본값: gemini-pro)
+        model: 사용할 모델 (기본값: gemini-1.5-flash - 빠르고 무료)
 
     Returns:
         str: AI 응답 텍스트
