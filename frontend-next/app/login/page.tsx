@@ -20,6 +20,7 @@ export default function LoginPage() {
       formData.append('username', email);
       formData.append('password', password);
 
+      console.log('로그인 요청 시작...');
       const response = await fetch('http://localhost:8001/api/v1/auth/login', {
         method: 'POST',
         headers: {
@@ -28,15 +29,23 @@ export default function LoginPage() {
         body: formData.toString(),
       });
 
+      console.log('응답 상태:', response.status, response.ok);
+
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('로그인 실패:', errorText);
         throw new Error('로그인 실패');
       }
 
       const data = await response.json();
+      console.log('로그인 성공! 토큰:', data.access_token);
+
       localStorage.setItem('access_token', data.access_token);
+      console.log('토큰 저장 완료, 대시보드로 이동...');
 
       router.push('/dashboard');
     } catch (err) {
+      console.error('로그인 에러:', err);
       setError('이메일 또는 비밀번호가 올바르지 않습니다.');
     } finally {
       setLoading(false);
