@@ -3,49 +3,77 @@ AI Selector Module
 OpenAI GPT와 Anthropic Claude API를 호출하는 헬퍼 함수
 """
 import os
+from typing import Optional
 from openai import OpenAI
 from anthropic import Anthropic
+from app.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 def ask_gpt(prompt: str, model: str = "gpt-4o") -> str:
     """
     OpenAI GPT 모델에 질문하고 응답 받기
-    
+
     Args:
         prompt: 질문 내용
         model: 사용할 모델 (기본값: gpt-4o)
-    
+
     Returns:
-        AI 응답 텍스트
+        str: AI 응답 텍스트
     """
     try:
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.error("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
+            return "GPT 오류: API 키가 설정되지 않았습니다."
+
+        client = OpenAI(api_key=api_key)
+        logger.debug(f"GPT 호출: 모델={model}, 프롬프트 길이={len(prompt)}")
+
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7
         )
-        return response.choices[0].message.content
+
+        answer = response.choices[0].message.content
+        logger.debug(f"GPT 응답: {answer[:100]}...")
+        return answer
+
     except Exception as e:
+        logger.error(f"GPT API 호출 오류: {e}", exc_info=True)
         return f"GPT 오류: {str(e)}"
 
 def ask_claude(prompt: str, model: str = "claude-3-5-sonnet-20240620") -> str:
     """
     Anthropic Claude 모델에 질문하고 응답 받기
-    
+
     Args:
         prompt: 질문 내용
         model: 사용할 모델 (기본값: claude-3-5-sonnet-20240620)
-    
+
     Returns:
-        AI 응답 텍스트
+        str: AI 응답 텍스트
     """
     try:
-        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            logger.error("ANTHROPIC_API_KEY 환경 변수가 설정되지 않았습니다.")
+            return "Claude 오류: API 키가 설정되지 않았습니다."
+
+        client = Anthropic(api_key=api_key)
+        logger.debug(f"Claude 호출: 모델={model}, 프롬프트 길이={len(prompt)}")
+
         message = client.messages.create(
             model=model,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]
         )
-        return message.content[0].text
+
+        answer = message.content[0].text
+        logger.debug(f"Claude 응답: {answer[:100]}...")
+        return answer
+
     except Exception as e:
+        logger.error(f"Claude API 호출 오류: {e}", exc_info=True)
         return f"Claude 오류: {str(e)}"
