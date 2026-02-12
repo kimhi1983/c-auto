@@ -1,0 +1,13 @@
+name = "c-auto"
+compatibility_date = "2024-01-01"
+main = "app/main.py"
+
+[env.production]
+name = "c-auto-production"
+
+# 환경 변수는 Cloudflare Dashboard에서 설정
+# 또는 wrangler secret 명령어 사용
+
+[[static_assets]]
+binding = "ASSETS"
+path = "./frontend"
