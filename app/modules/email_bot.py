@@ -7,7 +7,7 @@ import email
 import os
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
-from app.core.ai_selector import ask_claude, ask_gpt
+from app.core.ai_selector import ask_claude, ask_gemini
 from app.modules.excel_logger import save_mail_to_excel
 from app.utils.logger import setup_logger
 from datetime import datetime
@@ -51,8 +51,8 @@ def fetch_hiworks_emails() -> Dict[str, Any]:
             logger.info(f"읽은 메일 제목: {subject}")
 
             # 2. AI 분석 시작
-            # GPT-4o로 카테고리 분류
-            category = ask_gpt(f"이 메일 제목을 보고 [재고, 발주, 문의] 중 하나로 분류해줘: {subject}")
+            # Gemini로 카테고리 분류 (빠른 분류)
+            category = ask_gemini(f"이 메일 제목을 보고 [재고, 발주, 문의] 중 하나로 분류해줘: {subject}")
 
             # Claude 3.5로 내용 요약 및 답신 초안
             analysis = ask_claude(f"이사님 비서로서 다음 메일의 답신 초안을 작성해줘: {msg_content[:500]}")
@@ -116,7 +116,7 @@ def fetch_and_record_emails() -> Dict[str, Any]:
                 logger.info(f"메일 분석 중: {subject}")
 
                 # 2. AI 분석 진행
-                category = ask_gpt(f"이 메일을 [재고, 발주, 문의] 중 하나로 분류해: {subject}")
+                category = ask_gemini(f"이 메일을 [재고, 발주, 문의] 중 하나로 분류해: {subject}")
                 draft = ask_claude(f"다음 메일의 답신 초안을 작성해줘: {subject}")
 
                 record = {

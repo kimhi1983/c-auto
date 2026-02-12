@@ -20,7 +20,7 @@ from app.modules.file_search import (
 )
 from app.modules.excel_logger import save_mail_to_excel, get_work_log
 from app.modules.inventory import get_current_inventory, record_inventory_transaction
-from app.core.ai_selector import ask_claude, ask_gpt, ask_gemini
+from app.core.ai_selector import ask_claude, ask_gemini
 from app.utils.logger import setup_logger
 from app.utils.response_models import (
     BaseResponse,
@@ -99,14 +99,14 @@ async def check_emails_api() -> Dict[str, Any]:
 @app.get("/ai-chat", tags=["AI"])
 def ai_chat(
     query: str = Query(..., description="AI에게 질문할 내용"),
-    model: str = Query("claude", description="AI 모델 선택: claude, gemini, gpt")
+    model: str = Query("claude", description="AI 모델 선택: claude, gemini")
 ) -> Dict[str, str]:
     """
-    AI 채팅: Claude, Gemini, GPT 중 선택 가능
+    AI 채팅: Claude 또는 Gemini 선택 가능
 
     Args:
         query: 질문 내용
-        model: claude (기본값), gemini, gpt 중 선택
+        model: claude (기본값) 또는 gemini
     """
     logger.info(f"AI 채팅 요청 ({model}): {query[:50]}...")
 
@@ -115,11 +115,9 @@ def ai_chat(
             answer = ask_claude(query)
         elif model == "gemini":
             answer = ask_gemini(query)
-        elif model == "gpt":
-            answer = ask_gpt(query)
         else:
             logger.warning(f"지원하지 않는 모델: {model}")
-            return {"status": "error", "answer": "지원하지 않는 모델입니다. claude, gemini, gpt 중 선택하세요."}
+            return {"status": "error", "answer": "지원하지 않는 모델입니다. claude 또는 gemini를 선택하세요."}
 
         logger.info(f"AI 채팅 응답 완료 ({model})")
         return {"status": "success", "answer": answer, "model": model}
@@ -301,7 +299,7 @@ async def run_integration() -> Dict[str, Any]:
         # 단일 이메일 처리 (현재 fetch_hiworks_emails는 최신 1개만 반환)
         mail = email_data
 
-        # 2. GPT를 사용한 정밀 분석 (JSON 형식)
+        # 2. Claude를 사용한 정밀 분석 (JSON 형식)
         import json
 
         analysis_query = f"""
@@ -320,7 +318,7 @@ async def run_integration() -> Dict[str, Any]:
 """
 
         logger.info("AI 분석 시작")
-        analysis_text = ask_gpt(analysis_query)
+        analysis_text = ask_claude(analysis_query)
 
         # JSON 파싱 시도
         try:

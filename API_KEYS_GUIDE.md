@@ -2,13 +2,15 @@
 
 C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
 
-## 📋 필수 API 키
+---
 
-### 1. Anthropic Claude API 키 ⭐ (추천 - 메인 AI)
+## 📋 필수 API 키 (2개만 필요!)
+
+### 1. Anthropic Claude API 키 ⭐ (메인 AI)
 
 **특징:**
 - 가장 정확하고 한국어 지원 우수
-- 이메일 분석 및 업무 처리에 최적화
+- 이메일 분석 및 답신 초안 작성에 최적화
 - 무료 크레딧: $5 (약 20만 토큰)
 
 **발급 방법:**
@@ -35,11 +37,11 @@ C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
 
 ---
 
-### 2. Google Gemini API 키 ⭐ (추천 - 무료)
+### 2. Google Gemini API 키 ⭐ (무료 AI)
 
 **특징:**
 - 완전 무료 (제한: 분당 60회)
-- 빠른 응답 속도
+- 빠른 응답 속도로 카테고리 분류에 최적
 - 한국어 지원 우수
 
 **발급 방법:**
@@ -68,39 +70,6 @@ C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
 
 ---
 
-### 3. OpenAI GPT API 키 (선택사항)
-
-**특징:**
-- GPT-4o 모델 사용 가능
-- 유료 ($0.005/1K 토큰)
-- 무료 크레딧: 첫 가입 시 $5 (3개월 유효)
-
-**발급 방법:**
-
-1. **OpenAI 플랫폼 접속**
-   ```
-   https://platform.openai.com/api-keys
-   ```
-
-2. **로그인/회원가입**
-   - Google 또는 Microsoft 계정으로 가입 가능
-
-3. **API 키 생성**
-   - **"Create new secret key"** 클릭
-   - 이름 입력 (예: "c-auto")
-   - **복사 버튼 클릭** (한 번만 표시됨!)
-
-4. **결제 정보 등록** (선택사항)
-   - Settings → Billing
-   - 무료 크레딧 소진 후 필요
-
-5. **키 형식 확인**
-   ```
-   sk-proj-...
-   ```
-
----
-
 ## 🔧 API 키 설정 방법
 
 ### 로컬 개발 환경
@@ -113,14 +82,22 @@ C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
 
 2. **API 키 입력**
    ```env
-   # Claude (필수)
+   # Claude (메인 AI - 이메일 분석 및 답신)
    ANTHROPIC_API_KEY=sk-ant-api03-xxx...
 
-   # Gemini (필수)
+   # Gemini (무료 AI - 카테고리 분류)
    GOOGLE_API_KEY=AIzaSy...
 
-   # GPT (선택사항)
-   OPENAI_API_KEY=sk-proj-...
+   # 이메일 설정
+   EMAIL_USER=your_email@company.com
+   EMAIL_PASS=your_password
+   IMAP_SERVER=pop.hiworks.com
+   IMAP_PORT=995
+
+   # Dropbox 경로
+   DROPBOX_PATH=E:/Dropbox
+   EXCLUDE_FOLDER=회사 자료
+   AI_WORK_DIR=AI 업무폴더
    ```
 
 3. **저장 후 서버 재시작**
@@ -155,8 +132,38 @@ C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
    ```
 
    ```
-   Key: OPENAI_API_KEY (선택사항)
-   Value: sk-proj-...
+   Key: EMAIL_USER
+   Value: your_email@company.com
+   ```
+
+   ```
+   Key: EMAIL_PASS
+   Value: your_password
+   ```
+
+   ```
+   Key: IMAP_SERVER
+   Value: pop.hiworks.com
+   ```
+
+   ```
+   Key: IMAP_PORT
+   Value: 995
+   ```
+
+   ```
+   Key: DROPBOX_PATH
+   Value: /app/data
+   ```
+
+   ```
+   Key: EXCLUDE_FOLDER
+   Value: 회사 자료
+   ```
+
+   ```
+   Key: AI_WORK_DIR
+   Value: AI 업무폴더
    ```
 
 5. **Save Changes** 클릭
@@ -169,13 +176,13 @@ C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
 
 | AI 모델 | 무료 크레딧 | 유료 비용 | 권장 용도 |
 |---------|-------------|-----------|-----------|
-| **Claude** | $5 | $3/1M 토큰 | 메인 AI (이메일 분석) |
-| **Gemini** | 무제한 | 무료 | 백업 AI (파일 검색) |
-| **GPT** | $5 (3개월) | $5/1M 토큰 | 선택사항 |
+| **Claude** | $5 | $3/1M 토큰 | 메인 AI (이메일 분석 및 답신) |
+| **Gemini** | 무제한 | 무료 | 빠른 분류 작업 |
 
 **추천 조합:**
 - ✅ **Claude + Gemini** (완전 무료로 시작 가능!)
-- 💵 GPT는 선택사항 (필요시 추가)
+- 🚀 Claude: 이메일 답신 초안 작성 (정확도 최고)
+- ⚡ Gemini: 카테고리 분류 (속도 최고)
 
 ---
 
@@ -200,11 +207,6 @@ C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
    http://localhost:8000/ai-chat?query=안녕하세요&model=gemini
    ```
 
-   **GPT 테스트 (선택):**
-   ```
-   http://localhost:8000/ai-chat?query=안녕하세요&model=gpt
-   ```
-
 3. **예상 응답**
    ```json
    {
@@ -221,6 +223,7 @@ C-Auto는 **Claude**와 **Gemini** 두 가지 AI를 사용합니다.
 배포 완료 후 본인의 도메인으로 테스트:
 
 ```
+https://c-auto.yourdomain.com/api/status
 https://c-auto.yourdomain.com/ai-chat?query=안녕하세요&model=claude
 https://c-auto.yourdomain.com/ai-chat?query=안녕하세요&model=gemini
 ```
@@ -242,7 +245,6 @@ https://c-auto.yourdomain.com/ai-chat?query=안녕하세요&model=gemini
 3. **키가 노출되었다면 즉시 재발급**
    - Anthropic Console → API Keys → Delete
    - Google AI Studio → Revoke
-   - OpenAI Platform → Revoke
 
 ---
 
@@ -277,7 +279,6 @@ https://c-auto.yourdomain.com/ai-chat?query=안녕하세요&model=gemini
 **해결:**
 - **Gemini**: 1분 대기 (분당 60회 제한)
 - **Claude**: 무료 크레딧 소진 → 결제 정보 등록
-- **GPT**: 무료 크레딧 소진 → 결제 정보 등록
 
 ---
 
@@ -294,37 +295,32 @@ https://aistudio.google.com/app/apikey
 → API 키 클릭 → Usage 확인
 ```
 
-### OpenAI 사용량 확인
-```
-https://platform.openai.com/usage
-```
-
 ---
 
 ## 💡 Pro Tips
 
 1. **Claude를 메인으로 사용**
    - 가장 정확한 한국어 분석
-   - 이메일 분석 및 업무 처리에 최적
+   - 이메일 답신 초안 작성에 최적
 
-2. **Gemini를 백업으로 사용**
+2. **Gemini를 빠른 분류에 사용**
    - 완전 무료
-   - Claude API가 느릴 때 대체
+   - 카테고리 분류 등 간단한 작업
 
-3. **GPT는 선택사항**
-   - 필요시에만 추가
-   - 유료 크레딧 필요
-
-4. **API 키 주기적 갱신**
+3. **API 키 주기적 갱신**
    - 보안을 위해 3-6개월마다 재발급 권장
+
+4. **역할 분담**
+   - 📧 **Claude**: 이메일 답신 초안, 상세 분석
+   - ⚡ **Gemini**: 카테고리 분류, 키워드 추출
 
 ---
 
 ## 🎉 완료!
 
 API 키 설정이 완료되면:
-- ✅ Claude로 이메일 분석
-- ✅ Gemini로 파일 검색
-- ✅ GPT로 추가 작업 (선택)
+- ✅ Claude로 이메일 답신 초안 작성
+- ✅ Gemini로 빠른 카테고리 분류
+- ✅ 완전 무료로 시작 가능!
 
 모든 AI 기능이 정상 작동합니다! 🚀
