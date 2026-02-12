@@ -31,15 +31,18 @@ from app.utils.response_models import (
     InventoryTransactionRequest,
     AIQueryResponse
 )
+from app.api.v1 import api_router as api_v1_router
+from app.database.base import Base
+from app.database.config import engine
 
 # 로거 설정
 logger = setup_logger(__name__)
 
 # FastAPI 앱 초기화
 app = FastAPI(
-    title="C-Auto 이사님 업무지원 시스템",
-    description="AI 기반 업무 자동화 플랫폼",
-    version="2.0.0"
+    title="C-Auto 스마트 이메일 분석 시스템",
+    description="AI 기반 업무 자동화 플랫폼 - Phase 1: 인증 시스템",
+    version="2.0.0-phase1"
 )
 
 # CORS 설정 (필요시)
@@ -51,8 +54,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 정적 파일 서빙 (프론트엔드)
+# API v1 라우터 포함
+app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
+
+# 정적 파일 서빙 (기존 프론트엔드)
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    애플리케이션 시작 시 실행
+    """
+    logger.info("=== C-Auto 서버 시작 ===")
+    logger.info("Phase 1: 인증 시스템 활성화")
+    logger.info("API 문서: http://localhost:8000/docs")
+    logger.info("Next.js 개발 서버: cd frontend-next && npm run dev")
+
+    # 데이터베이스 테이블 생성 (개발 환경에서만)
+    # 프로덕션에서는 Alembic 마이그레이션 사용
+    # Base.metadata.create_all(bind=engine)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    애플리케이션 종료 시 실행
+    """
+    logger.info("=== C-Auto 서버 종료 ===")
 
 
 @app.get("/", include_in_schema=False)
