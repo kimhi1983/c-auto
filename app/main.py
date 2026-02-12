@@ -20,7 +20,7 @@ from app.modules.file_search import (
 )
 from app.modules.excel_logger import save_mail_to_excel, get_work_log
 from app.modules.inventory import get_current_inventory, record_inventory_transaction
-from app.core.ai_selector import ask_claude, ask_gpt
+from app.core.ai_selector import ask_claude, ask_gpt, ask_gemini
 from app.utils.logger import setup_logger
 from app.utils.response_models import (
     BaseResponse,
@@ -97,18 +97,34 @@ async def check_emails_api() -> Dict[str, Any]:
 
 
 @app.get("/ai-chat", tags=["AI"])
-def ai_chat(query: str = Query(..., description="AI에게 질문할 내용")) -> Dict[str, str]:
+def ai_chat(
+    query: str = Query(..., description="AI에게 질문할 내용"),
+    model: str = Query("claude", description="AI 모델 선택: claude, gemini, gpt")
+) -> Dict[str, str]:
     """
-    Claude AI에게 질문하고 답변 받기
+    AI 채팅: Claude, Gemini, GPT 중 선택 가능
+
+    Args:
+        query: 질문 내용
+        model: claude (기본값), gemini, gpt 중 선택
     """
-    logger.info(f"AI 채팅 요청: {query[:50]}...")
+    logger.info(f"AI 채팅 요청 ({model}): {query[:50]}...")
 
     try:
-        answer = ask_claude(query)
-        logger.info("AI 채팅 응답 완료")
-        return {"status": "success", "answer": answer}
+        if model == "claude":
+            answer = ask_claude(query)
+        elif model == "gemini":
+            answer = ask_gemini(query)
+        elif model == "gpt":
+            answer = ask_gpt(query)
+        else:
+            logger.warning(f"지원하지 않는 모델: {model}")
+            return {"status": "error", "answer": "지원하지 않는 모델입니다. claude, gemini, gpt 중 선택하세요."}
+
+        logger.info(f"AI 채팅 응답 완료 ({model})")
+        return {"status": "success", "answer": answer, "model": model}
     except Exception as e:
-        logger.error(f"AI 채팅 오류: {e}", exc_info=True)
+        logger.error(f"AI 채팅 오류 ({model}): {e}", exc_info=True)
         return {"status": "error", "answer": f"오류 발생: {str(e)}"}
 
 
