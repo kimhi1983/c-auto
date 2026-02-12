@@ -51,6 +51,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",  # Next.js 개발 서버
         "http://localhost:3001",  # Next.js 대체 포트
+        "http://localhost:3002",  # Next.js 대체 포트 2
         "http://localhost:8000",  # 백엔드 자체
         "http://localhost:8001",  # 백엔드 대체 포트
         "https://c-auto.kimhi1983.com",  # 프로덕션 도메인
