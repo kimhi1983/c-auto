@@ -1,14 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // 페이지 로드 시 저장된 이메일 불러오기
+  useEffect(() => {
+    const savedEmail = localStorage.getItem('saved_email');
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setRememberMe(true);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,7 +30,6 @@ export default function LoginPage() {
       formData.append('username', email);
       formData.append('password', password);
 
-      console.log('로그인 요청 시작...');
       const response = await fetch('http://localhost:8001/api/v1/auth/login', {
         method: 'POST',
         headers: {
@@ -29,33 +38,31 @@ export default function LoginPage() {
         body: formData.toString(),
       });
 
-      console.log('응답 상태:', response.status, response.ok);
-
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('로그인 실패:', errorText);
         throw new Error('로그인 실패');
       }
 
       const data = await response.json();
-      console.log('로그인 성공! 토큰:', data.access_token);
 
       if (!data.access_token) {
         throw new Error('토큰이 없습니다');
       }
 
+      // 토큰 저장
       localStorage.setItem('access_token', data.access_token);
-      console.log('토큰 저장 완료, 대시보드로 이동...');
 
-      // 로그인 성공 알림
-      alert('로그인 성공! 대시보드로 이동합니다.');
+      // 아이디 기억하기 처리
+      if (rememberMe) {
+        localStorage.setItem('saved_email', email);
+      } else {
+        localStorage.removeItem('saved_email');
+      }
 
-      // 대시보드로 강제 이동
+      // 대시보드로 이동
       window.location.href = '/dashboard';
     } catch (err) {
       console.error('로그인 에러:', err);
       setError('이메일 또는 비밀번호가 올바르지 않습니다.');
-    } finally {
       setLoading(false);
     }
   };
@@ -95,6 +102,19 @@ export default function LoginPage() {
               placeholder="비밀번호를 입력하세요"
               required
             />
+          </div>
+
+          <div className="flex items-center">
+            <input
+              id="remember-me"
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="w-4 h-4 text-brand-500 bg-slate-50 border-slate-300 rounded focus:ring-brand-200 focus:ring-2"
+            />
+            <label htmlFor="remember-me" className="ml-2 text-sm text-slate-700">
+              아이디 기억하기
+            </label>
           </div>
 
           {error && (
