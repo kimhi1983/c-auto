@@ -14,7 +14,7 @@ def get_current_inventory() -> Optional[List[Dict[str, Any]]]:
     Returns:
         Optional[List[Dict[str, Any]]]: 재고 목록 또는 None
     """
-    dropbox_path = os.getenv("DROPBOX_PATH")
+    dropbox_path = os.getenv("DROPBOX_PATH", "/tmp/dropbox")
     if not dropbox_path:
         logger.error("DROPBOX_PATH 환경 변수가 설정되지 않았습니다.")
         return None
@@ -51,7 +51,7 @@ def record_inventory_transaction(item_name: str, quantity: int, transaction_type
     """
     from datetime import datetime
 
-    dropbox_path = os.getenv("DROPBOX_PATH")
+    dropbox_path = os.getenv("DROPBOX_PATH", "/tmp/dropbox")
     if not dropbox_path:
         logger.error("DROPBOX_PATH 환경 변수가 설정되지 않았습니다.")
         return False
@@ -101,7 +101,7 @@ def update_inventory_stock(item_name: str, quantity: int, transaction_type: str)
     Returns:
         bool: 성공 여부
     """
-    dropbox_path = os.getenv("DROPBOX_PATH")
+    dropbox_path = os.getenv("DROPBOX_PATH", "/tmp/dropbox")
     if not dropbox_path:
         logger.error("DROPBOX_PATH 환경 변수가 설정되지 않았습니다.")
         return False

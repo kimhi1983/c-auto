@@ -11,9 +11,10 @@ from app.utils.logger import setup_logger
 load_dotenv()
 logger = setup_logger(__name__)
 
-DROPBOX_PATH = os.getenv("DROPBOX_PATH")
-EXCLUDE_FOLDER = os.getenv("EXCLUDE_FOLDER")
-AI_WORK_DIR = os.path.join(DROPBOX_PATH, os.getenv("AI_WORK_DIR"))
+# 클라우드 환경 대응: 환경 변수가 없으면 기본값 사용
+DROPBOX_PATH = os.getenv("DROPBOX_PATH", "/tmp/dropbox")
+EXCLUDE_FOLDER = os.getenv("EXCLUDE_FOLDER", "회사 자료")
+AI_WORK_DIR = os.path.join(DROPBOX_PATH, os.getenv("AI_WORK_DIR", "AI 업무폴더"))
 
 def initialize_ai_folder() -> str:
     """
