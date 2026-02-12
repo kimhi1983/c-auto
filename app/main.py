@@ -99,14 +99,14 @@ async def check_emails_api() -> Dict[str, Any]:
 @app.get("/ai-chat", tags=["AI"])
 def ai_chat(
     query: str = Query(..., description="AI에게 질문할 내용"),
-    model: str = Query("claude", description="AI 모델 선택: claude, gemini")
+    model: str = Query("gemini", description="AI 모델 선택: gemini, claude")
 ) -> Dict[str, str]:
     """
-    AI 채팅: Claude 또는 Gemini 선택 가능
+    AI 채팅: Gemini(무료) 또는 Claude 선택 가능
 
     Args:
         query: 질문 내용
-        model: claude (기본값) 또는 gemini
+        model: gemini (기본값, 무료) 또는 claude (정밀 분석)
     """
     logger.info(f"AI 채팅 요청 ({model}): {query[:50]}...")
 
