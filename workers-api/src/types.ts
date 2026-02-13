@@ -6,10 +6,10 @@ import { z } from 'zod';
 export interface Env {
   // D1 Database
   DB: D1Database;
-  // KV Namespace (cache) - optional until enabled
-  CACHE: KVNamespace;
+  // KV Namespace (cache) - optional until enabled in Dashboard
+  CACHE?: KVNamespace;
   // R2 Bucket (file storage) - optional until R2 enabled in Dashboard
-  FILES: R2Bucket;
+  FILES?: R2Bucket;
 
   // Secrets (set via wrangler secret put)
   ANTHROPIC_API_KEY: string;

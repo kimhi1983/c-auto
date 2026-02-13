@@ -188,7 +188,7 @@ archives.get("/:id", async (c) => {
 
   // R2에서 파일 내용 가져오기
   let content = null;
-  if (doc.filePath) {
+  if (doc.filePath && c.env.FILES) {
     try {
       const file = await c.env.FILES.get(doc.filePath);
       if (file) {
@@ -234,7 +234,7 @@ archives.delete("/:id", async (c) => {
   }
 
   // R2에서 파일 삭제
-  if (doc.filePath) {
+  if (doc.filePath && c.env.FILES) {
     try {
       await c.env.FILES.delete(doc.filePath);
     } catch {

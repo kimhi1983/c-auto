@@ -121,15 +121,17 @@ files.post("/save-to-ai-folder", async (c) => {
   }
 
   // R2에 AI 폴더로 복사 (원본이 R2에 있는 경우)
-  try {
-    const source = await c.env.FILES.get(file_path);
-    if (source) {
-      const fileName = file_path.split("/").pop() || file_path;
-      await c.env.FILES.put(`ai-work/${fileName}`, source.body);
-      return c.json({ status: "success", message: "AI 업무폴더에 저장 완료" });
+  if (c.env.FILES) {
+    try {
+      const source = await c.env.FILES.get(file_path);
+      if (source) {
+        const fileName = file_path.split("/").pop() || file_path;
+        await c.env.FILES.put(`ai-work/${fileName}`, source.body);
+        return c.json({ status: "success", message: "AI 업무폴더에 저장 완료" });
+      }
+    } catch {
+      // R2 접근 실패
     }
-  } catch {
-    // R2 접근 실패
   }
 
   return c.json({ status: "success", message: "파일 경로가 등록되었습니다" });
@@ -139,6 +141,9 @@ files.post("/save-to-ai-folder", async (c) => {
  * GET /files/ai-folder - AI 업무폴더 파일 목록
  */
 files.get("/ai-folder", async (c) => {
+  if (!c.env.FILES) {
+    return c.json({ status: "success", data: [] });
+  }
   try {
     const list = await c.env.FILES.list({ prefix: "ai-work/" });
     const data = list.objects.map((obj) => ({

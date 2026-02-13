@@ -28,6 +28,7 @@ generated_docs/
 
 # Workers build output
 workers-api/dist/
+.wrangler/
 
 # OS
 Thumbs.db
