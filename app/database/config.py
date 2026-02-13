@@ -14,10 +14,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Database URL from environment variable
 # Format: postgresql://user:password@host:port/database
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/c_auto_dev"
-)
+# Default: SQLite (Render 무료 플랜에서도 외부 DB 없이 동작)
+_default_db = f"sqlite:///{PROJECT_ROOT / 'c_auto.db'}"
+DATABASE_URL = os.getenv("DATABASE_URL", _default_db)
+
+# Render PostgreSQL URL 호환 (render는 postgres:// 사용, SQLAlchemy는 postgresql:// 필요)
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # If using SQLite, convert to absolute path
 if DATABASE_URL.startswith("sqlite:///"):

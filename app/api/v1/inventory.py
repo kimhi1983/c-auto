@@ -239,7 +239,7 @@ async def delete_item(
 @router.post("/items/{item_id}/transaction")
 async def record_transaction(
     item_id: int,
-    transaction_type: str = Query(..., regex="^(입고|출고)$"),
+    transaction_type: str = Query(..., pattern="^(입고|출고)$"),
     quantity: int = Query(..., gt=0),
     note: Optional[str] = None,
     reference_number: Optional[str] = None,

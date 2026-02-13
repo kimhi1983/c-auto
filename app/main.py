@@ -95,8 +95,11 @@ async def startup_event():
     logger.info("API 문서: /docs")
 
     # 데이터베이스 테이블 생성
-    Base.metadata.create_all(bind=engine)
-    logger.info("데이터베이스 테이블 확인 완료")
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("데이터베이스 테이블 확인 완료")
+    except Exception as e:
+        logger.error(f"데이터베이스 초기화 실패 (서버는 계속 실행): {e}")
 
 
 @app.on_event("shutdown")

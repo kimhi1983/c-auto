@@ -97,7 +97,7 @@ async def get_current_rates(db: Session = Depends(get_db)):
 
 @router.get("/history")
 async def get_rate_history(
-    currency_pair: str = Query("USD_KRW", regex="^(USD_KRW|CNY_KRW)$"),
+    currency_pair: str = Query("USD_KRW", pattern="^(USD_KRW|CNY_KRW)$"),
     days: int = Query(30, ge=7, le=365),
     db: Session = Depends(get_db),
 ):

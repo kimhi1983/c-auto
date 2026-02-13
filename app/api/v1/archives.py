@@ -288,7 +288,7 @@ async def generate_archive_from_email(
 
 @router.post("/generate-report")
 async def generate_daily_report(
-    report_type: str = Query("daily", regex="^(daily|weekly|monthly)$"),
+    report_type: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
     report_date: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
