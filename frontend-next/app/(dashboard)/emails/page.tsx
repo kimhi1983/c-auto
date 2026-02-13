@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiUrl, authJsonHeaders } from '@/lib/api';
 
 // ==========================================
 // Types
@@ -104,8 +105,7 @@ const PRIORITY_ICONS: Record<string, string> = {
 // ==========================================
 
 function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('access_token');
-  return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+  return authJsonHeaders();
 }
 
 function formatDate(dateStr: string | null): string {
@@ -151,7 +151,7 @@ export default function EmailsPage() {
       if (searchQuery) params.set('search', searchQuery);
       params.set('limit', '100');
 
-      const res = await fetch(`/api/v1/emails/?${params}`, { headers: getAuthHeaders() });
+      const res = await fetch(apiUrl(`/api/v1/emails/?${params}`), { headers: getAuthHeaders() });
       if (!res.ok) throw new Error('이메일 목록 조회 실패');
       const data = await res.json();
       if (data.status === 'success') {
@@ -167,7 +167,7 @@ export default function EmailsPage() {
   // ---- Fetch stats ----
   const loadStats = useCallback(async () => {
     try {
-      const res = await fetch('/api/v1/emails/stats', { headers: getAuthHeaders() });
+      const res = await fetch(apiUrl('/api/v1/emails/stats'), { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.status === 'success') setStats(data.data);
@@ -187,7 +187,7 @@ export default function EmailsPage() {
     setFetching(true);
     setError('');
     try {
-      const res = await fetch('/api/v1/emails/fetch?max_count=5', {
+      const res = await fetch(apiUrl('/api/v1/emails/fetch?max_count=5'), {
         method: 'POST',
         headers: getAuthHeaders(),
       });
@@ -212,7 +212,7 @@ export default function EmailsPage() {
   // ---- Open email detail ----
   const openEmail = async (emailId: number) => {
     try {
-      const res = await fetch(`/api/v1/emails/${emailId}`, { headers: getAuthHeaders() });
+      const res = await fetch(apiUrl(`/api/v1/emails/${emailId}`), { headers: getAuthHeaders() });
       if (!res.ok) throw new Error('이메일 상세 조회 실패');
       const data = await res.json();
       if (data.status === 'success') {
@@ -233,7 +233,7 @@ export default function EmailsPage() {
     if (!selectedEmail) return;
     setActionLoading('save');
     try {
-      const res = await fetch(`/api/v1/emails/${selectedEmail.id}`, {
+      const res = await fetch(apiUrl(`/api/v1/emails/${selectedEmail.id}`), {
         method: 'PATCH',
         headers: getAuthHeaders(),
         body: JSON.stringify({ draft_response: draftText, draft_subject: draftSubject }),
@@ -254,7 +254,7 @@ export default function EmailsPage() {
     if (!selectedEmail) return;
     setActionLoading('submit');
     try {
-      const res = await fetch(`/api/v1/emails/${selectedEmail.id}/submit`, {
+      const res = await fetch(apiUrl(`/api/v1/emails/${selectedEmail.id}/submit`), {
         method: 'POST',
         headers: getAuthHeaders(),
       });
@@ -278,7 +278,7 @@ export default function EmailsPage() {
     if (!selectedEmail) return;
     setActionLoading('approve');
     try {
-      const res = await fetch(`/api/v1/emails/${selectedEmail.id}/approve`, {
+      const res = await fetch(apiUrl(`/api/v1/emails/${selectedEmail.id}/approve`), {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({ comments: approvalComment || null }),
@@ -304,7 +304,7 @@ export default function EmailsPage() {
     if (!selectedEmail) return;
     setActionLoading('reject');
     try {
-      const res = await fetch(`/api/v1/emails/${selectedEmail.id}/reject`, {
+      const res = await fetch(apiUrl(`/api/v1/emails/${selectedEmail.id}/reject`), {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({ comments: approvalComment || '반려' }),
@@ -331,7 +331,7 @@ export default function EmailsPage() {
     if (!confirm('이메일을 발송하시겠습니까?')) return;
     setActionLoading('send');
     try {
-      const res = await fetch(`/api/v1/emails/${selectedEmail.id}/send`, {
+      const res = await fetch(apiUrl(`/api/v1/emails/${selectedEmail.id}/send`), {
         method: 'POST',
         headers: getAuthHeaders(),
       });
@@ -355,7 +355,7 @@ export default function EmailsPage() {
     if (!selectedEmail) return;
     setActionLoading('reclassify');
     try {
-      const res = await fetch(`/api/v1/emails/${selectedEmail.id}/reclassify`, {
+      const res = await fetch(apiUrl(`/api/v1/emails/${selectedEmail.id}/reclassify`), {
         method: 'POST',
         headers: getAuthHeaders(),
       });

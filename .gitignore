@@ -23,8 +23,11 @@ frontend-next/out/
 # Generated docs
 generated_docs/
 
-# Archives
-archives/
+# Archives data
+/archives/
+
+# Workers build output
+workers-api/dist/
 
 # OS
 Thumbs.db

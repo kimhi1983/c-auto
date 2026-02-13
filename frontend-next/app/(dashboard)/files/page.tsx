@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 interface FileResult {
   name: string;
@@ -27,7 +28,9 @@ export default function FilesPage() {
     setSearched(true);
 
     try {
-      const response = await fetch(`/search-files?keyword=${encodeURIComponent(keyword)}`);
+      const response = await fetch(apiUrl(`/api/v1/files/search?keyword=${encodeURIComponent(keyword)}`), {
+        headers: authHeaders(),
+      });
       if (!response.ok) throw new Error('파일 검색 실패');
       const data = await response.json();
 
@@ -53,9 +56,9 @@ export default function FilesPage() {
   const saveToAiFolder = async (filePath: string) => {
     setSaving(filePath);
     try {
-      const response = await fetch('/save-to-ai-folder', {
+      const response = await fetch(apiUrl('/api/v1/files/save-to-ai-folder'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authJsonHeaders(),
         body: JSON.stringify({ file_path: filePath }),
       });
       if (!response.ok) throw new Error('저장 실패');
@@ -73,7 +76,9 @@ export default function FilesPage() {
 
   const loadAiFolder = async () => {
     try {
-      const response = await fetch('/ai-folder-contents');
+      const response = await fetch(apiUrl('/api/v1/files/ai-folder'), {
+        headers: authHeaders(),
+      });
       if (!response.ok) return;
       const data = await response.json();
       if (data.status === 'success' && data.data) {

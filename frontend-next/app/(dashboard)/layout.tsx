@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { apiUrl, authHeaders } from '@/lib/api';
 
 interface User {
   id: number;
@@ -90,8 +91,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
 
       try {
-        const response = await fetch('/api/v1/auth/me', {
-          headers: { 'Authorization': `Bearer ${token}` },
+        const response = await fetch(apiUrl('/api/v1/auth/me'), {
+          headers: authHeaders(),
         });
 
         if (!response.ok) throw new Error('인증 실패');

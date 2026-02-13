@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 interface InventoryItem {
   name: string;
@@ -31,7 +32,9 @@ export default function InventoryPage() {
   const loadInventory = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/inventory');
+      const response = await fetch(apiUrl('/api/v1/inventory'), {
+        headers: authHeaders(),
+      });
       if (!response.ok) throw new Error('재고 조회 실패');
       const data = await response.json();
 
@@ -63,9 +66,9 @@ export default function InventoryPage() {
     setError('');
 
     try {
-      const response = await fetch('/api/inventory/transaction', {
+      const response = await fetch(apiUrl('/api/v1/inventory/transaction'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authJsonHeaders(),
         body: JSON.stringify({
           item_name: tx.item_name,
           quantity: tx.quantity,

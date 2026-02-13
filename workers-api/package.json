@@ -1,0 +1,29 @@
+{
+  "name": "c-auto-workers-api",
+  "version": "3.0.0",
+  "description": "C-Auto Smart Business Management - Cloudflare Workers API",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "wrangler d1 migrations apply c-auto-db --local",
+    "db:migrate:prod": "wrangler d1 migrations apply c-auto-db --remote",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.21.0",
+    "drizzle-orm": "^0.38.0",
+    "jose": "^6.0.0",
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0",
+    "@cloudflare/workers-types": "^4.20250204.0",
+    "typescript": "^5.7.0",
+    "drizzle-kit": "^0.30.0",
+    "@types/bcryptjs": "^2.4.6"
+  }
+}

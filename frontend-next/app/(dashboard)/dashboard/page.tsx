@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiUrl, authHeaders } from '@/lib/api';
 
 interface EmailStats {
   total: number;
@@ -32,8 +33,7 @@ interface DocHistory {
 }
 
 function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('access_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return authHeaders();
 }
 
 /* ========================================
@@ -99,12 +99,12 @@ export default function DashboardPage() {
     const fetchAll = async () => {
       try {
         const [emailStatsRes, emailListRes, invRes, rateRes, archiveRes, docsRes] = await Promise.allSettled([
-          fetch('/api/v1/emails/stats', { headers: getAuthHeaders() }),
-          fetch('/api/v1/emails/?limit=5', { headers: getAuthHeaders() }),
-          fetch('/api/v1/inventory/stats', { headers: getAuthHeaders() }),
-          fetch('/api/v1/exchange-rates/current'),
-          fetch('/api/v1/archives/stats', { headers: getAuthHeaders() }),
-          fetch('/api/v1/ai-docs/history?page_size=3', { headers: getAuthHeaders() }),
+          fetch(apiUrl('/api/v1/emails/stats'), { headers: getAuthHeaders() }),
+          fetch(apiUrl('/api/v1/emails/?limit=5'), { headers: getAuthHeaders() }),
+          fetch(apiUrl('/api/v1/inventory/stats'), { headers: getAuthHeaders() }),
+          fetch(apiUrl('/api/v1/exchange-rates/current')),
+          fetch(apiUrl('/api/v1/archives/stats'), { headers: getAuthHeaders() }),
+          fetch(apiUrl('/api/v1/ai-docs/history?page_size=3'), { headers: getAuthHeaders() }),
         ]);
 
         if (emailStatsRes.status === 'fulfilled' && emailStatsRes.value.ok) {

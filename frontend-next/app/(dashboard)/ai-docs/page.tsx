@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 type Tab = 'write' | 'analyze' | 'rewrite';
 
@@ -52,12 +53,10 @@ export default function AiDocsPage() {
 
   const [error, setError] = useState('');
 
-  const getToken = () => localStorage.getItem('access_token') || '';
-
   const loadTemplates = async () => {
     try {
-      const res = await fetch('/api/v1/ai-docs/templates', {
-        headers: { Authorization: `Bearer ${getToken()}` },
+      const res = await fetch(apiUrl('/api/v1/ai-docs/templates'), {
+        headers: authHeaders(),
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -74,8 +73,8 @@ export default function AiDocsPage() {
 
   const loadHistory = async () => {
     try {
-      const res = await fetch('/api/v1/ai-docs/history?page=1&page_size=10', {
-        headers: { Authorization: `Bearer ${getToken()}` },
+      const res = await fetch(apiUrl('/api/v1/ai-docs/history?page=1&page_size=10'), {
+        headers: authHeaders(),
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -101,12 +100,9 @@ export default function AiDocsPage() {
     setError('');
 
     try {
-      const res = await fetch(`/api/v1/ai-docs/generate?template_id=${selectedTemplate}&save=true`, {
+      const res = await fetch(apiUrl(`/api/v1/ai-docs/generate?template_id=${selectedTemplate}&save=true`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}`,
-        },
+        headers: authJsonHeaders(),
         body: JSON.stringify({
           context: writeContext,
           title: writeTitle || null,
@@ -139,12 +135,9 @@ export default function AiDocsPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/v1/ai-docs/analyze', {
+      const res = await fetch(apiUrl('/api/v1/ai-docs/analyze'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}`,
-        },
+        headers: authJsonHeaders(),
         body: JSON.stringify({
           content: analyzeContent,
           analysis_type: analysisType,
@@ -176,12 +169,9 @@ export default function AiDocsPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/v1/ai-docs/rewrite', {
+      const res = await fetch(apiUrl('/api/v1/ai-docs/rewrite'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}`,
-        },
+        headers: authJsonHeaders(),
         body: JSON.stringify({
           content: rewriteContent,
           instructions: rewriteInstructions,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 interface User {
   id: number;
@@ -29,9 +30,8 @@ export default function UsersPage() {
   const loadUsers = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch('/api/v1/users', {
-        headers: { 'Authorization': `Bearer ${token}` },
+      const response = await fetch(apiUrl('/api/v1/users'), {
+        headers: authHeaders(),
       });
 
       if (response.status === 403) {
@@ -59,13 +59,9 @@ export default function UsersPage() {
     setError('');
 
     try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch('/api/v1/auth/register', {
+      const response = await fetch(apiUrl('/api/v1/auth/register'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: authJsonHeaders(),
         body: JSON.stringify(newUser),
       });
 
