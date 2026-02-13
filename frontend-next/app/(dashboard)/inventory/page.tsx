@@ -108,13 +108,13 @@ export default function InventoryPage() {
           <button
             onClick={loadInventory}
             disabled={loading}
-            className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+            className="px-4 py-2.5 rounded-2xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
           >
             새로고침
           </button>
           <button
             onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition"
+            className="px-4 py-2.5 rounded-2xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition"
           >
             {showForm ? '취소' : '입출고 등록'}
           </button>
@@ -122,7 +122,7 @@ export default function InventoryPage() {
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm border border-red-200">
+        <div className="bg-red-50 text-red-700 px-4 py-3 rounded-2xl text-sm border border-red-200">
           {error}
         </div>
       )}
@@ -137,7 +137,7 @@ export default function InventoryPage() {
               <select
                 value={tx.item_name}
                 onChange={(e) => setTx({ ...tx, item_name: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
                 required
               >
                 <option value="">선택</option>
@@ -151,7 +151,7 @@ export default function InventoryPage() {
               <select
                 value={tx.type}
                 onChange={(e) => setTx({ ...tx, type: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
               >
                 <option value="입고">입고</option>
                 <option value="출고">출고</option>
@@ -164,7 +164,7 @@ export default function InventoryPage() {
                 min="1"
                 value={tx.quantity || ''}
                 onChange={(e) => setTx({ ...tx, quantity: parseInt(e.target.value) || 0 })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
                 required
               />
             </div>
@@ -175,14 +175,14 @@ export default function InventoryPage() {
                 value={tx.note}
                 onChange={(e) => setTx({ ...tx, note: e.target.value })}
                 placeholder="메모"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
               />
             </div>
             <div className="flex items-end">
               <button
                 type="submit"
                 disabled={txLoading}
-                className="w-full px-4 py-2 rounded-lg bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition disabled:opacity-50"
+                className="w-full px-4 py-2 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition disabled:opacity-50"
               >
                 {txLoading ? '처리 중...' : '등록'}
               </button>

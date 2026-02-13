@@ -107,14 +107,14 @@ export default function UsersPage() {
         </div>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition"
+          className="px-4 py-2.5 rounded-2xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition"
         >
           {showForm ? '취소' : '새 사용자 추가'}
         </button>
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm border border-red-200">
+        <div className="bg-red-50 text-red-700 px-4 py-3 rounded-2xl text-sm border border-red-200">
           {error}
         </div>
       )}
@@ -130,7 +130,7 @@ export default function UsersPage() {
                 type="email"
                 value={newUser.email}
                 onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
                 placeholder="user@company.com"
                 required
               />
@@ -141,7 +141,7 @@ export default function UsersPage() {
                 type="password"
                 value={newUser.password}
                 onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
                 placeholder="8자 이상"
                 required
                 minLength={8}
@@ -153,7 +153,7 @@ export default function UsersPage() {
                 type="text"
                 value={newUser.full_name}
                 onChange={(e) => setNewUser({ ...newUser, full_name: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
                 placeholder="홍길동"
                 required
               />
@@ -164,7 +164,7 @@ export default function UsersPage() {
                 type="text"
                 value={newUser.department}
                 onChange={(e) => setNewUser({ ...newUser, department: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
                 placeholder="경영지원팀"
               />
             </div>
@@ -173,7 +173,7 @@ export default function UsersPage() {
               <select
                 value={newUser.role}
                 onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
               >
                 <option value="staff">직원</option>
                 <option value="approver">승인자</option>
@@ -185,7 +185,7 @@ export default function UsersPage() {
               <button
                 type="submit"
                 disabled={formLoading}
-                className="w-full px-4 py-2 rounded-lg bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition disabled:opacity-50"
+                className="w-full px-4 py-2 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition disabled:opacity-50"
               >
                 {formLoading ? '생성 중...' : '사용자 생성'}
               </button>

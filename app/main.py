@@ -34,6 +34,13 @@ from app.utils.response_models import (
 from app.api.v1 import api_router as api_v1_router
 from app.database.base import Base
 from app.database.config import engine
+# Import all models so Base.metadata knows about them
+from app.models.user import User  # noqa: F401
+from app.models.email import Email, EmailApproval, EmailAttachment  # noqa: F401
+from app.models.file_index import FileIndex  # noqa: F401
+from app.models.archive import ArchivedDocument, DailyReport  # noqa: F401
+from app.models.exchange_rate import ExchangeRateHistory  # noqa: F401
+from app.models.inventory import InventoryItem, InventoryTransaction  # noqa: F401
 
 # 로거 설정
 logger = setup_logger(__name__)
@@ -41,8 +48,8 @@ logger = setup_logger(__name__)
 # FastAPI 앱 초기화
 app = FastAPI(
     title="C-Auto 스마트 이메일 분석 시스템",
-    description="AI 기반 업무 자동화 플랫폼 - Phase 1: 인증 시스템",
-    version="2.0.0-phase1"
+    description="AI 기반 업무 자동화 플랫폼 - Phase 7: 전체 시스템 통합 완료",
+    version="2.0.0-phase9"
 )
 
 # CORS 설정 (프론트엔드와의 통신 허용)
@@ -75,13 +82,13 @@ async def startup_event():
     애플리케이션 시작 시 실행
     """
     logger.info("=== C-Auto 서버 시작 ===")
-    logger.info("Phase 2: 전체 기능 통합 완료")
+    logger.info("Phase 7: 전체 시스템 통합 완료 (이메일/파일/아카이브/환율/재고)")
     logger.info("API 문서: http://localhost:8000/docs")
     logger.info("Next.js 개발 서버: cd frontend-next && npm run dev")
 
-    # 데이터베이스 테이블 생성 (개발 환경에서만)
-    # 프로덕션에서는 Alembic 마이그레이션 사용
-    # Base.metadata.create_all(bind=engine)
+    # 데이터베이스 테이블 생성 (개발 환경)
+    Base.metadata.create_all(bind=engine)
+    logger.info("데이터베이스 테이블 확인 완료")
 
 
 @app.on_event("shutdown")
@@ -97,6 +104,12 @@ def read_root():
     """루트 경로를 대시보드로 리다이렉트"""
     logger.info("루트 경로 접근 - 대시보드로 리다이렉트")
     return RedirectResponse(url="/static/index.html")
+
+
+@app.get("/health", tags=["시스템"])
+def health_check():
+    """Render health check endpoint"""
+    return {"status": "ok"}
 
 
 @app.get("/api/status", response_model=BaseResponse, tags=["시스템"])

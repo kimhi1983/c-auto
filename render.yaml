@@ -1,0 +1,48 @@
+services:
+  # FastAPI Backend
+  - type: web
+    name: c-auto-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: IMAP_SERVER
+        sync: false
+      - key: IMAP_PORT
+        sync: false
+      - key: DROPBOX_PATH
+        sync: false
+      - key: EXCLUDE_FOLDER
+        sync: false
+      - key: AI_WORK_DIR
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "1440"
+    healthCheckPath: /health
+
+  # Next.js Frontend
+  - type: web
+    name: c-auto-frontend
+    runtime: node
+    rootDir: frontend-next
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      - key: PORT
+        value: "3003"

@@ -113,19 +113,19 @@ export default function FilesPage() {
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           placeholder="검색어를 입력하세요 (예: 견적서, 계약서...)"
-          className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 focus:outline-none"
+          className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 focus:outline-none"
         />
         <button
           type="submit"
           disabled={loading || !keyword.trim()}
-          className="px-6 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition disabled:opacity-50 shrink-0"
+          className="px-6 py-3 rounded-2xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition disabled:opacity-50 shrink-0"
         >
           {loading ? '검색 중...' : '검색'}
         </button>
       </form>
 
       {error && (
-        <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm border border-red-200">
+        <div className="bg-red-50 text-red-700 px-4 py-3 rounded-2xl text-sm border border-red-200">
           {error}
         </div>
       )}
@@ -149,7 +149,7 @@ export default function FilesPage() {
                     <button
                       onClick={() => saveToAiFolder(file.path)}
                       disabled={saving === file.path}
-                      className="px-3 py-1.5 rounded-lg bg-brand-50 text-brand-600 text-xs font-medium hover:bg-brand-100 transition disabled:opacity-50"
+                      className="px-3 py-1.5 rounded-xl bg-brand-50 text-brand-600 text-xs font-medium hover:bg-brand-100 transition disabled:opacity-50"
                     >
                       {saving === file.path ? '저장 중...' : 'AI 폴더로 복사'}
                     </button>

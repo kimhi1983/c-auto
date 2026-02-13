@@ -1,19 +1,22 @@
 import type { NextConfig } from "next";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+
 const nextConfig: NextConfig = {
+  output: 'standalone',
   async rewrites() {
     return [
       // API v1 endpoints
-      { source: '/api/:path*', destination: 'http://localhost:8001/api/:path*' },
+      { source: '/api/:path*', destination: `${BACKEND_URL}/api/:path*` },
       // Legacy backend endpoints
-      { source: '/check-emails', destination: 'http://localhost:8001/check-emails' },
-      { source: '/search-files', destination: 'http://localhost:8001/search-files' },
-      { source: '/save-to-ai-folder', destination: 'http://localhost:8001/save-to-ai-folder' },
-      { source: '/ai-folder-contents', destination: 'http://localhost:8001/ai-folder-contents' },
-      { source: '/work-log', destination: 'http://localhost:8001/work-log' },
-      { source: '/ai-chat', destination: 'http://localhost:8001/ai-chat' },
-      { source: '/inventory-status', destination: 'http://localhost:8001/inventory-status' },
-      { source: '/run-integration', destination: 'http://localhost:8001/run-integration' },
+      { source: '/check-emails', destination: `${BACKEND_URL}/check-emails` },
+      { source: '/search-files', destination: `${BACKEND_URL}/search-files` },
+      { source: '/save-to-ai-folder', destination: `${BACKEND_URL}/save-to-ai-folder` },
+      { source: '/ai-folder-contents', destination: `${BACKEND_URL}/ai-folder-contents` },
+      { source: '/work-log', destination: `${BACKEND_URL}/work-log` },
+      { source: '/ai-chat', destination: `${BACKEND_URL}/ai-chat` },
+      { source: '/inventory-status', destination: `${BACKEND_URL}/inventory-status` },
+      { source: '/run-integration', destination: `${BACKEND_URL}/run-integration` },
     ];
   },
 };

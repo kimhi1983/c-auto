@@ -1,5 +1,7 @@
 node_modules/
 .env
+.env.local
+.env.production
 __pycache__/
 data/*.xlsx
 *.pyc
@@ -13,3 +15,17 @@ data/*.xlsx
 *.db-journal
 *.sqlite
 *.sqlite3
+
+# Next.js
+frontend-next/.next/
+frontend-next/out/
+
+# Generated docs
+generated_docs/
+
+# Archives
+archives/
+
+# OS
+Thumbs.db
+nul

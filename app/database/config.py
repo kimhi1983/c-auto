@@ -28,13 +28,21 @@ if DATABASE_URL.startswith("sqlite:///"):
     DATABASE_URL = f"sqlite:///{absolute_db_path}"
 
 # Create SQLAlchemy engine
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,  # Verify connections before using them
-    pool_size=10,  # Connection pool size
-    max_overflow=20,  # Maximum overflow connections
-    echo=False  # Set to True for SQL logging during development
-)
+# SQLite doesn't support pool_size/max_overflow
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        echo=False,
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+        echo=False,
+    )
 
 # Create sessionmaker
 SessionLocal = sessionmaker(
