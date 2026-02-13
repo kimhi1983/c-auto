@@ -1,9 +1,8 @@
 services:
-  # FastAPI Backend
   - type: web
-    name: c-auto-api
+    name: c-auto
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && cd frontend-next && npm install && npm run build
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ANTHROPIC_API_KEY
@@ -33,16 +32,3 @@ services:
       - key: JWT_EXPIRE_MINUTES
         value: "1440"
     healthCheckPath: /health
-
-  # Next.js Frontend
-  - type: web
-    name: c-auto-frontend
-    runtime: node
-    rootDir: frontend-next
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    envVars:
-      - key: NEXT_PUBLIC_API_URL
-        sync: false
-      - key: PORT
-        value: "3003"

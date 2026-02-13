@@ -2,14 +2,15 @@
 C-Auto Main Application
 FastAPI 기반 웹 서버
 """
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import uvicorn
 import os
 from datetime import datetime
+from pathlib import Path
 
 from app.modules.email_bot import fetch_hiworks_emails, fetch_and_record_emails
 from app.modules.file_search import (
@@ -48,7 +49,7 @@ logger = setup_logger(__name__)
 # FastAPI 앱 초기화
 app = FastAPI(
     title="C-Auto 스마트 이메일 분석 시스템",
-    description="AI 기반 업무 자동화 플랫폼 - Phase 7: 전체 시스템 통합 완료",
+    description="AI 기반 업무 자동화 플랫폼 v2.0",
     version="2.0.0-phase9"
 )
 
@@ -72,21 +73,28 @@ app.add_middleware(
 # API v1 라우터 포함
 app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
 
-# 정적 파일 서빙 (기존 프론트엔드)
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+# ─── Next.js 정적 파일 서빙 ───
+FRONTEND_DIR = Path(os.getcwd()) / "frontend-next" / "out"
+LEGACY_DIR = Path(os.getcwd()) / "frontend"
+
+# Next.js _next 정적 에셋 (JS, CSS, images)
+if (FRONTEND_DIR / "_next").exists():
+    app.mount("/_next", StaticFiles(directory=str(FRONTEND_DIR / "_next")), name="next_assets")
+
+# 기존 프론트엔드 (레거시 폴백)
+if LEGACY_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(LEGACY_DIR)), name="static")
 
 
 @app.on_event("startup")
 async def startup_event():
-    """
-    애플리케이션 시작 시 실행
-    """
-    logger.info("=== C-Auto 서버 시작 ===")
-    logger.info("Phase 7: 전체 시스템 통합 완료 (이메일/파일/아카이브/환율/재고)")
-    logger.info("API 문서: http://localhost:8000/docs")
-    logger.info("Next.js 개발 서버: cd frontend-next && npm run dev")
+    """애플리케이션 시작 시 실행"""
+    logger.info("=== C-Auto v2.0 서버 시작 ===")
+    logger.info(f"프론트엔드 경로: {FRONTEND_DIR}")
+    logger.info(f"프론트엔드 존재: {FRONTEND_DIR.exists()}")
+    logger.info("API 문서: /docs")
 
-    # 데이터베이스 테이블 생성 (개발 환경)
+    # 데이터베이스 테이블 생성
     Base.metadata.create_all(bind=engine)
     logger.info("데이터베이스 테이블 확인 완료")
 
@@ -101,9 +109,8 @@ async def shutdown_event():
 
 @app.get("/", include_in_schema=False)
 def read_root():
-    """루트 경로를 대시보드로 리다이렉트"""
-    logger.info("루트 경로 접근 - 대시보드로 리다이렉트")
-    return RedirectResponse(url="/static/index.html")
+    """루트 경로 → 로그인 페이지"""
+    return RedirectResponse(url="/login")
 
 
 @app.get("/health", tags=["시스템"])
@@ -451,6 +458,28 @@ async def run_integration() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"통합 자동화 오류: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+
+# ─── Next.js 프론트엔드 페이지 서빙 (catch-all, 반드시 마지막) ───
+FRONTEND_PAGES = {"login", "dashboard", "emails", "ai-docs", "files", "archives", "inventory", "users"}
+
+
+@app.get("/{page}", include_in_schema=False)
+async def serve_frontend_page(page: str):
+    """Next.js 정적 페이지 서빙"""
+    if page not in FRONTEND_PAGES:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    html_file = FRONTEND_DIR / f"{page}.html"
+    if html_file.exists():
+        return FileResponse(str(html_file), media_type="text/html")
+
+    # 폴백: index.html
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file), media_type="text/html")
+
+    raise HTTPException(status_code=404, detail="Frontend not built")
 
 
 if __name__ == "__main__":
