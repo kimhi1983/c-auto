@@ -2,50 +2,86 @@
  * Authentication Routes - /api/v1/auth
  */
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { hash, compare } from "bcryptjs";
 import { users } from "../db/schema";
 import { createToken, authMiddleware } from "../middleware/auth";
-import type { Env } from "../types";
+import { Env, UserLoginSchema, UserCreateSchema } from "../types";
 
 const auth = new Hono<{ Bindings: Env }>();
 
 /**
+ * POST /auth/register - 관리자 전용 사용자 등록
+ */
+auth.post(
+  "/register",
+  authMiddleware,
+  zValidator("json", UserCreateSchema),
+  async (c) => {
+    const currentUser = c.get("user");
+    if (currentUser.role !== "admin") {
+      return c.json({ error: "관리자 권한이 필요합니다" }, 403);
+    }
+
+    const body = c.req.valid("json");
+    const db = drizzle(c.env.DB);
+
+    const [existing] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, body.email))
+      .limit(1);
+
+    if (existing) {
+      return c.json({ error: "이미 등록된 이메일입니다" }, 409);
+    }
+
+    const hashedPassword = await hash(body.password, 12);
+
+    const [newUser] = await db
+      .insert(users)
+      .values({
+        email: body.email,
+        passwordHash: hashedPassword,
+        fullName: body.full_name,
+        role: body.role,
+        department: body.department,
+      })
+      .returning();
+
+    return c.json(
+      {
+        id: newUser.id,
+        email: newUser.email,
+        full_name: newUser.fullName,
+        role: newUser.role,
+        department: newUser.department,
+      },
+      201
+    );
+  }
+);
+
+/**
  * POST /auth/login - 로그인
  */
-auth.post("/login", async (c) => {
-  let email: string;
-  let password: string;
-
-  // form-encoded (프론트엔드 호환) 또는 JSON 지원
-  const contentType = c.req.header("content-type") || "";
-  if (contentType.includes("application/x-www-form-urlencoded")) {
-    const formData = await c.req.parseBody();
-    email = (formData.username || formData.email) as string;
-    password = formData.password as string;
-  } else {
-    const body = await c.req.json<{ email?: string; username?: string; password: string }>();
-    email = body.email || body.username || "";
-    password = body.password;
-  }
-
-  if (!email || !password) {
-    return c.json({ detail: "이메일과 비밀번호를 입력하세요" }, 400);
-  }
-
+auth.post("/login", zValidator("json", UserLoginSchema), async (c) => {
+  const body = c.req.valid("json");
   const db = drizzle(c.env.DB);
+
   const [user] = await db
     .select()
     .from(users)
-    .where(eq(users.email, email))
+    .where(eq(users.email, body.email))
     .limit(1);
 
   if (!user || !user.isActive) {
     return c.json({ detail: "이메일 또는 비밀번호가 올바르지 않습니다" }, 401);
   }
 
-  const valid = await compare(password, user.passwordHash);
+  const valid = await compare(body.password, user.passwordHash);
   if (!valid) {
     return c.json({ detail: "이메일 또는 비밀번호가 올바르지 않습니다" }, 401);
   }
@@ -63,65 +99,6 @@ auth.post("/login", async (c) => {
       department: user.department,
     },
   });
-});
-
-/**
- * POST /auth/register - 관리자 전용 사용자 등록
- */
-auth.post("/register", authMiddleware, async (c) => {
-  const currentUser = c.get("user");
-  if (currentUser.role !== "admin") {
-    return c.json({ error: "관리자 권한이 필요합니다" }, 403);
-  }
-
-  const body = await c.req.json<{
-    email: string;
-    password: string;
-    full_name: string;
-    role?: string;
-    department?: string;
-  }>();
-
-  if (!body.email || !body.password || !body.full_name) {
-    return c.json({ error: "필수 정보를 입력하세요" }, 400);
-  }
-
-  const db = drizzle(c.env.DB);
-
-  // 이메일 중복 확인
-  const [existing] = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, body.email))
-    .limit(1);
-
-  if (existing) {
-    return c.json({ error: "이미 등록된 이메일입니다" }, 409);
-  }
-
-  const passwordHash = await hash(body.password, 12);
-
-  const [newUser] = await db
-    .insert(users)
-    .values({
-      email: body.email,
-      passwordHash,
-      fullName: body.full_name,
-      role: (body.role as any) || "staff",
-      department: body.department,
-    })
-    .returning();
-
-  return c.json(
-    {
-      id: newUser.id,
-      email: newUser.email,
-      full_name: newUser.fullName,
-      role: newUser.role,
-      department: newUser.department,
-    },
-    201
-  );
 });
 
 /**

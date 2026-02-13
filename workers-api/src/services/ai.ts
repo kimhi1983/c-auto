@@ -93,11 +93,12 @@ export const SYSTEM_PROMPTS = {
 
 // ─── 이메일 8분류 프롬프트 ───
 
-export function classifyEmailPrompt(subject: string, body: string): string {
+export function classifyEmailPrompt(sender: string, subject: string, body: string): string {
   return `다음 이메일을 분석해서 정확히 JSON 형식으로만 답해줘. 다른 설명 없이 JSON만 출력해.
 
+발신자: ${sender}
 제목: ${subject}
-내용: ${body.slice(0, 1000)}
+내용: ${(body || '').slice(0, 1000)}
 
 형식:
 {

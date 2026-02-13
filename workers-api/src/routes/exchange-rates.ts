@@ -17,9 +17,13 @@ rates.get("/current", async (c) => {
   const db = drizzle(c.env.DB);
 
   // KV 캐시 확인
-  const cached = await c.env.CACHE.get("exchange_rates_current", "json");
-  if (cached) {
-    return c.json({ status: "success", data: cached });
+  if (c.env.CACHE) {
+    try {
+      const cached = await c.env.CACHE.get("exchange_rates_current", "json");
+      if (cached) {
+        return c.json({ status: "success", data: cached });
+      }
+    } catch { /* KV not available */ }
   }
 
   // 외부 API에서 환율 가져오기
@@ -51,9 +55,13 @@ rates.get("/current", async (c) => {
         .onConflictDoNothing();
 
       // KV에 1시간 캐시
-      await c.env.CACHE.put("exchange_rates_current", JSON.stringify(result), {
-        expirationTtl: 3600,
-      });
+      if (c.env.CACHE) {
+        try {
+          await c.env.CACHE.put("exchange_rates_current", JSON.stringify(result), {
+            expirationTtl: 3600,
+          });
+        } catch { /* KV not available */ }
+      }
 
       return c.json({ status: "success", data: result });
     }

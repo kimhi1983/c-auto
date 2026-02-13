@@ -1,120 +1,66 @@
-/**
- * C-Auto v3.0 - Cloudflare Workers API
- * Hono.js + D1 + R2 + KV
- */
-import { Hono } from "hono";
-import { cors } from "hono/cors";
-import { logger } from "hono/logger";
-import { HTTPException } from "hono/http-exception";
-import type { Env } from "./types";
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { logger } from 'hono/logger';
+import { trimTrailingSlash } from 'hono/trailing-slash';
+import auth from './routes/auth';
+import emailsRouter from './routes/emails';
+import inventory from './routes/inventory';
+import rates from './routes/exchange-rates';
+import archives from './routes/archives';
+import usersRouter from './routes/users';
+import files from './routes/files';
+import aiDocs from './routes/ai-docs';
+import type { Env, UserContext } from './types';
 
-// Routes
-import auth from "./routes/auth";
-import usersRouter from "./routes/users";
-import emailsRouter from "./routes/emails";
-import aiDocs from "./routes/ai-docs";
-import files from "./routes/files";
-import archives from "./routes/archives";
-import inventory from "./routes/inventory";
-import rates from "./routes/exchange-rates";
+const app = new Hono<{ Bindings: Env; Variables: { user: UserContext } }>();
 
-const app = new Hono<{ Bindings: Env }>();
+// 미들웨어 설정
+app.use(trimTrailingSlash());
+app.use('*', logger());
 
-// ─── Middleware ───
+app.use('*', async (c, next) => {
+  const allowedOrigins = (c.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const origin = c.req.header('Origin');
 
-// Logger
-app.use("*", logger());
+  const allowOrigin = (origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0] || '*';
 
-// CORS
-app.use("*", async (c, next) => {
   const corsMiddleware = cors({
-    origin: [
-      c.env.CORS_ORIGIN || "https://c-auto.kimhi1983.com",
-      "http://localhost:3003",
-      "http://localhost:3000",
-    ],
-    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
+    origin: allowOrigin,
+    allowHeaders: ['Content-Type', 'Authorization'],
+    allowMethods: ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
+    exposeHeaders: ['Content-Length'],
+    maxAge: 600,
   });
   return corsMiddleware(c, next);
 });
 
-// ─── Health Check ───
+// 라우터 등록
+app.route('/api/v1/auth', auth);
+app.route('/api/v1/emails', emailsRouter);
+app.route('/api/v1/inventory', inventory);
+app.route('/api/v1/exchange-rates', rates);
+app.route('/api/v1/archives', archives);
+app.route('/api/v1/users', usersRouter);
+app.route('/api/v1/files', files);
+app.route('/api/v1/ai-docs', aiDocs);
 
-app.get("/health", (c) => {
+// 상태 확인 라우트
+app.get('/api/status', (c) => {
   return c.json({
-    status: "ok",
-    version: "3.0.0",
-    platform: "cloudflare-workers",
-    timestamp: new Date().toISOString(),
+    status: 'success',
+    message: '시스템이 정상 작동 중입니다.',
+    version: '3.0.0',
+    env: c.env.ENVIRONMENT,
   });
 });
 
-// ─── API v1 Routes ───
-
-app.route("/api/v1/auth", auth);
-app.route("/api/v1/users", usersRouter);
-app.route("/api/v1/emails", emailsRouter);
-app.route("/api/v1/ai-docs", aiDocs);
-app.route("/api/v1/files", files);
-app.route("/api/v1/archives", archives);
-app.route("/api/v1/inventory", inventory);
-app.route("/api/v1/exchange-rates", rates);
-
-// ─── 프론트엔드 호환 경로 (레거시) ───
-
-// /search-files → /api/v1/files/search (redirect)
-app.get("/search-files", (c) => {
-  const keyword = c.req.query("keyword") || "";
-  return c.redirect(`/api/v1/files/search?keyword=${encodeURIComponent(keyword)}`);
-});
-
-// /api/inventory → /api/v1/inventory (redirect)
-app.get("/api/inventory", (c) => c.redirect("/api/v1/inventory"));
-
-// /api/inventory/transaction → /api/v1/inventory/transaction
-app.post("/api/inventory/transaction", async (c) => {
-  const url = new URL(c.req.url);
-  url.pathname = "/api/v1/inventory/transaction";
-  return app.fetch(new Request(url.toString(), c.req.raw), c.env);
-});
-
-// ─── API Status ───
-
-app.get("/api/status", (c) => {
+// 기본 라우트
+app.get('/', (c) => {
   return c.json({
-    status: "success",
-    message: "C-Auto v3.0 API 정상 작동 중",
-    platform: "Cloudflare Workers",
-    endpoints: {
-      auth: "/api/v1/auth",
-      users: "/api/v1/users",
-      emails: "/api/v1/emails",
-      "ai-docs": "/api/v1/ai-docs",
-      files: "/api/v1/files",
-      archives: "/api/v1/archives",
-      inventory: "/api/v1/inventory",
-      "exchange-rates": "/api/v1/exchange-rates",
-    },
+    message: 'C-Auto Workers API v3.0',
+    status: 'operational',
+    env: c.env.ENVIRONMENT,
   });
-});
-
-// ─── Error Handler ───
-
-app.onError((err, c) => {
-  if (err instanceof HTTPException) {
-    return c.json({ error: err.message }, err.status);
-  }
-
-  console.error("Unhandled error:", err);
-  return c.json({ error: "서버 오류가 발생했습니다" }, 500);
-});
-
-// ─── 404 Handler ───
-
-app.notFound((c) => {
-  return c.json({ error: "요청한 리소스를 찾을 수 없습니다" }, 404);
 });
 
 export default app;

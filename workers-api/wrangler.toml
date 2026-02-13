@@ -1,34 +1,36 @@
-name = "c-auto-api"
+name = "c-auto-workers-api"
 main = "src/index.ts"
-compatibility_date = "2025-02-10"
-compatibility_flags = ["nodejs_compat"]
+compatibility_date = "2024-02-12"
 
-# D1 Database
+# D1 Database Binding
+# 로컬 개발 시: wrangler d1 execute c-auto-db --local --file=migrations/0001_initial.sql
+# 배포 시: wrangler d1 create c-auto-db 명령어로 ID 생성 후 아래 database_id 교체
 [[d1_databases]]
 binding = "DB"
 database_name = "c-auto-db"
-database_id = "placeholder-will-be-set-after-creation"
+database_id = "5f389eb1-8b1f-4391-bd99-7d994ad014e4"
 
-# KV Namespace (캐시: OAuth 토큰, 환율 등)
+# KV Namespace (cache - 환율 등 캐시용)
+# 배포 시: wrangler kv namespace create CACHE 로 생성 후 id 교체
 [[kv_namespaces]]
 binding = "CACHE"
-id = "placeholder-will-be-set-after-creation"
+id = "f79df338acaa4a9abe40e4f90e0fe882"
 
-# R2 Bucket (파일 저장소: 아카이브, 문서)
-[[r2_buckets]]
-binding = "FILES"
-bucket_name = "c-auto-files"
+# R2 Bucket (파일 저장소)
+# Cloudflare Dashboard에서 R2 활성화 후 아래 주석 해제
+# wrangler r2 bucket create c-auto-files 로 생성
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "c-auto-files"
 
-# Environment Variables (Secrets는 wrangler secret put 으로 설정)
+# 환경 변수 (개발용 기본값)
 [vars]
-ENVIRONMENT = "production"
-JWT_ALGORITHM = "HS256"
+JWT_SECRET = "dev-secret-key-change-in-prod"
 JWT_EXPIRE_MINUTES = "1440"
-CORS_ORIGIN = "https://c-auto.kimhi1983.com"
+ALLOWED_ORIGINS = "http://localhost:3000,https://c-auto.pages.dev"
+ENVIRONMENT = "production"
 
-# Development overrides
-[env.dev]
-name = "c-auto-api-dev"
-[env.dev.vars]
-ENVIRONMENT = "development"
-CORS_ORIGIN = "http://localhost:3003"
+# Secrets (배포 시 wrangler secret put 명령어로 설정):
+# wrangler secret put ANTHROPIC_API_KEY
+# wrangler secret put GOOGLE_API_KEY
+# wrangler secret put JWT_SECRET  (프로덕션용 강력한 키로 교체)
