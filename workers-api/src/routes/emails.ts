@@ -156,14 +156,150 @@ emailsRouter.get("/:id", async (c) => {
 });
 
 /**
- * POST /emails/fetch - 이메일 수신 (하이웍스 API)
+ * POST /emails/fetch - 이메일 수신 (비즈니스 이메일 수신 시뮬레이션)
  */
 emailsRouter.post("/fetch", async (c) => {
-  return c.json({
-    status: "success",
-    message: "하이웍스 API 연동 준비 중입니다.",
-    count: 0,
-  });
+  const maxCount = Math.min(parseInt(c.req.query("max_count") || "3"), 5);
+  const user = c.get("user");
+  const db = drizzle(c.env.DB);
+  const now = new Date().toISOString();
+
+  // 한국 무역/제조 회사 비즈니스 이메일 샘플 풀
+  const sampleEmails = [
+    {
+      sender: "김태호 부장 <th.kim@startech.co.kr>",
+      subject: "[발주] ST-2400 부품 500개 긴급 발주 요청",
+      body: "안녕하세요, 스타텍 김태호입니다.\n\n다름이 아니라 ST-2400 부품 500개를 긴급으로 발주 요청드립니다. 현재 생산라인 가동에 필요한 재고가 부족한 상황이며, 가능한 이번 주 금요일까지 납품 부탁드립니다.\n\n단가는 기존 계약 조건(개당 12,500원)으로 진행 부탁드리며, 납기 가능 여부 회신 부탁드립니다.\n\n감사합니다.",
+      category: "발주",
+      priority: "high",
+      summary: "ST-2400 부품 500개 긴급 발주 요청, 금요일까지 납품 필요",
+    },
+    {
+      sender: "박지연 대리 <jy.park@dongwoo-ind.com>",
+      subject: "[견적요청] 2024년 하반기 원자재 견적 요청",
+      body: "안녕하세요, 동우산업 구매팀 박지연입니다.\n\n2024년 하반기 원자재 공급 관련하여 견적을 요청드립니다. 대상 품목은 알루미늄 합금(A6061) 10톤, 스테인리스 강판(SUS304) 5톤입니다.\n\n견적서에 단가, 납기, 결제조건을 포함하여 다음 주 수요일까지 회신 부탁드립니다.\n\n감사합니다.",
+      category: "견적요청",
+      priority: "medium",
+      summary: "하반기 원자재(알루미늄, 스테인리스) 견적 요청",
+    },
+    {
+      sender: "이수민 과장 <sm.lee@globalcomm.kr>",
+      subject: "[문의] OEM 제품 커스터마이징 가능 여부 문의",
+      body: "안녕하세요, 글로벌커뮤니케이션 이수민입니다.\n\n귀사의 GC-100 시리즈 제품에 대해 OEM 커스터마이징이 가능한지 문의드립니다. 자사 브랜드 로고 각인과 패키지 디자인 변경이 필요하며, 월 1,000대 규모로 검토 중입니다.\n\n가능 여부와 최소 주문 수량, 리드타임에 대해 안내 부탁드립니다.",
+      category: "문의",
+      priority: "medium",
+      summary: "GC-100 시리즈 OEM 커스터마이징 가능 여부 문의",
+    },
+    {
+      sender: "정현우 팀장 <hw.jung@hankook-parts.co.kr>",
+      subject: "[클레임] 납품 제품 품질 불량 건 통보",
+      body: "안녕하세요, 한국부품 품질관리팀 정현우입니다.\n\n지난 2월 5일 납품받은 HK-350 부품 200개 중 15개에서 치수 불량이 확인되었습니다. 규격 대비 0.3mm 초과 상태이며, 현재 생산라인 투입이 불가합니다.\n\n즉시 불량품 교체 및 원인 분석 보고서를 요청드립니다. 납품 품질 관리에 각별한 주의를 부탁드립니다.\n\n담당자 연락 부탁드립니다.",
+      category: "클레임",
+      priority: "high",
+      summary: "HK-350 부품 치수 불량(15개), 즉시 교체 및 원인 분석 요청",
+    },
+    {
+      sender: "최영진 상무 <yj.choi@samhwa-group.com>",
+      subject: "[미팅] 2월 전략 파트너십 회의 일정 안내",
+      body: "안녕하세요, 삼화그룹 경영전략실 최영진입니다.\n\n2025년 전략 파트너십 관련 회의를 아래와 같이 안내드립니다.\n\n일시: 2월 20일(목) 오후 2시\n장소: 삼화그룹 본사 15층 회의실\n안건: 하반기 공동 마케팅 전략, 신규 사업 협력 방안\n\n참석 가능 여부를 2월 17일까지 회신 부탁드립니다.",
+      category: "미팅",
+      priority: "medium",
+      summary: "2월 20일 전략 파트너십 회의 일정 안내 및 참석 확인 요청",
+    },
+    {
+      sender: "송미경 차장 <mk.song@keumsung.co.kr>",
+      subject: "[요청] 2월 납품 일정 변경 요청",
+      body: "안녕하세요, 금성전자 구매팀 송미경입니다.\n\n기존 2월 15일로 예정되어 있던 KS-200 부품 납품 일정을 2월 22일로 변경 요청드립니다. 자사 생산계획 조정으로 인해 입고 일정이 1주일 연기되었습니다.\n\n변경 가능 여부를 확인하여 회신 부탁드립니다. 불편을 드려 죄송합니다.",
+      category: "요청",
+      priority: "medium",
+      summary: "KS-200 부품 납품 일정 2/15 → 2/22로 변경 요청",
+    },
+    {
+      sender: "인사팀 <hr@company.com>",
+      subject: "[공지] 2025년 상반기 정기 건강검진 안내",
+      body: "안녕하세요, 인사팀입니다.\n\n2025년 상반기 정기 건강검진을 아래와 같이 안내드립니다.\n\n대상: 전 직원\n기간: 3월 3일 ~ 3월 28일\n검진기관: 서울아산병원 건강증진센터\n\n개인별 검진 일정은 별도 안내 예정이며, 검진 전 유의사항을 첨부 파일에서 확인해 주시기 바랍니다.",
+      category: "공지",
+      priority: "low",
+      summary: "2025년 상반기 정기 건강검진 안내 (3월 3일~28일)",
+    },
+    {
+      sender: "왕웨이 매니저 <wang.wei@shenzhen-tech.cn>",
+      subject: "[발주] PCB 기판 3,000장 발주 (PO#CN-2025-0213)",
+      body: "안녕하세요, 심천테크 왕웨이입니다.\n\n아래와 같이 PCB 기판을 발주합니다.\n\n품목: FR-4 양면 PCB 기판\n수량: 3,000장\n규격: 100mm x 80mm, 1.6mm 두께\n납기: 3월 15일\nPO번호: CN-2025-0213\n\n기존 단가(장당 $2.50, FOB 선전) 기준으로 진행 부탁드립니다. 선적 서류는 B/L, Invoice, Packing List 필요합니다.",
+      category: "발주",
+      priority: "high",
+      summary: "PCB 기판 3,000장 발주 (FOB 선전, 3/15 납기)",
+    },
+    {
+      sender: "한지은 대리 <je.han@mirae-auto.com>",
+      subject: "[견적요청] 자동차 부품 시작품 제작 견적",
+      body: "안녕하세요, 미래자동차 R&D센터 한지은입니다.\n\n신규 개발 중인 전기차 모터 하우징 시작품 제작 견적을 요청드립니다.\n\n재질: ADC12 알루미늄 다이캐스팅\n수량: 시작품 50개\n도면: 첨부 파일 참조\n납기 희망: 4주 이내\n\n기술 검토 후 견적서와 함께 제작 가능 여부를 회신해 주시기 바랍니다.",
+      category: "견적요청",
+      priority: "medium",
+      summary: "전기차 모터 하우징 시작품 50개 제작 견적 요청",
+    },
+    {
+      sender: "오성준 부장 <sj.oh@daehang-logistics.kr>",
+      subject: "[요청] 수출 통관 서류 긴급 요청",
+      body: "안녕하세요, 대항물류 오성준입니다.\n\n2월 14일 선적 예정인 컨테이너(BOOKING NO: DH-250214) 관련하여 수출 통관 서류를 긴급히 요청드립니다.\n\n필요 서류: Commercial Invoice, Packing List, Certificate of Origin\n마감: 오늘 오후 5시까지\n\n선적 일정에 차질이 없도록 협조 부탁드립니다.",
+      category: "요청",
+      priority: "high",
+      summary: "2/14 선적 건 수출 통관 서류 오늘 오후 5시까지 긴급 요청",
+    },
+  ];
+
+  try {
+    // 랜덤 셔플 후 maxCount만큼 선택
+    const shuffled = [...sampleEmails].sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, maxCount);
+
+    const processed: Array<Record<string, unknown>> = [];
+
+    for (const mail of selected) {
+      const externalId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const receivedAt = new Date(Date.now() - Math.floor(Math.random() * 3600000)).toISOString();
+
+      const [inserted] = await db
+        .insert(emails)
+        .values({
+          externalId,
+          subject: mail.subject,
+          sender: mail.sender,
+          recipient: user.email,
+          body: mail.body,
+          category: mail.category as any,
+          priority: mail.priority as any,
+          status: "unread",
+          aiSummary: mail.summary,
+          aiConfidence: 90 + Math.floor(Math.random() * 10),
+          processedBy: user.userId,
+          receivedAt,
+          processedAt: now,
+        })
+        .returning();
+
+      processed.push({
+        id: inserted.id,
+        subject: inserted.subject,
+        sender: inserted.sender,
+        category: inserted.category,
+        priority: inserted.priority,
+        ai_summary: inserted.aiSummary,
+      });
+    }
+
+    return c.json({
+      status: "success",
+      message: `${processed.length}개 이메일 처리 완료`,
+      count: processed.length,
+      data: processed,
+    });
+  } catch (err: any) {
+    return c.json(
+      { status: "error", detail: `이메일 가져오기 실패: ${err.message}` },
+      500
+    );
+  }
 });
 
 /**
@@ -309,7 +445,7 @@ emailsRouter.post("/:id/reclassify", async (c) => {
   }
 
   const prompt = classifyEmailPrompt(email.sender || "", email.subject || "", email.body || "");
-  const classification = await askGemini(c.env.GOOGLE_API_KEY, prompt);
+  const classification = await askClaude(c.env.ANTHROPIC_API_KEY, prompt);
 
   let category = "기타";
   const categories = ["발주", "요청", "견적요청", "문의", "공지", "미팅", "클레임"];

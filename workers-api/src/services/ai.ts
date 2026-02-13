@@ -53,7 +53,7 @@ export async function askClaudeLong(
 export async function askGemini(
   apiKey: string,
   prompt: string,
-  model = "gemini-1.5-flash"
+  model = "gemini-2.0-flash"
 ): Promise<string> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const geminiModel = genAI.getGenerativeModel({ model });
