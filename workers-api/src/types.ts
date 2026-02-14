@@ -14,8 +14,6 @@ export interface Env {
   AI: Ai;
 
   // Secrets (set via wrangler secret put)
-  ANTHROPIC_API_KEY: string;
-  GOOGLE_API_KEY: string;
   JWT_SECRET: string;
 
   // Gmail OAuth2 (하이웍스→Gmail POP3 포워딩 후 Gmail API로 메일 조회)

@@ -35,11 +35,6 @@ ALLOWED_ORIGINS = "http://localhost:3000,https://c-auto.pages.dev"
 ENVIRONMENT = "production"
 
 # Secrets (배포 시 wrangler secret put 명령어로 설정):
-# wrangler secret put ANTHROPIC_API_KEY
-# wrangler secret put GOOGLE_API_KEY
 # wrangler secret put JWT_SECRET  (프로덕션용 강력한 키로 교체)
-#
-# Gmail API (하이웍스 POP3 → Gmail 포워딩 → Gmail API)
-# Google Cloud Console에서 OAuth 2.0 클라이언트 ID 생성 후:
 # wrangler secret put GMAIL_CLIENT_ID
 # wrangler secret put GMAIL_CLIENT_SECRET
