@@ -240,7 +240,189 @@ function parseDraftText(raw: string | null | undefined): string {
 }
 
 // ==========================================
-// Excel Export
+// Instruction Sheet Export (카테고리별 지시서)
+// ==========================================
+
+const INSTRUCTION_TYPES: Record<string, { label: string; icon: string }> = {
+  '자료대응': { label: '자료발송 지시서', icon: '📋' },
+  '영업기회': { label: '견적/발주 지시서', icon: '📊' },
+  '스케줄링': { label: '미팅 일정 지시서', icon: '📅' },
+  '정보수집': { label: '시장정보 분석서', icon: '📈' },
+  '필터링':   { label: '처리완료 보고서', icon: '📝' },
+};
+
+function exportInstructionSheet(email: EmailDetail) {
+  const BOM = '\uFEFF';
+  const ai = parseAiSummary(email.ai_summary);
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const category = email.category || '필터링';
+  const code = ai?.code || CATEGORY_CODES[category] || 'E';
+  const receivedDate = formatDateFull(email.received_at);
+
+  // 이메일 본문에서 품목 추출 (줄바꿈 기준)
+  const bodyLines = (email.body || '').split('\n').map(l => l.trim()).filter(Boolean);
+
+  let headers: string[] = [];
+  let rows: string[][] = [];
+  let sheetTitle = '';
+
+  switch (category) {
+    case '자료대응': {
+      sheetTitle = 'KPROS 자료발송 지시서';
+      headers = ['항목', '내용'];
+      const keywords = ai?.search_keywords?.join(', ') || '';
+      rows = [
+        ['문서번호', `KPROS-A-${dateStr}-${email.id}`],
+        ['작성일', formatDateFull(now.toISOString())],
+        ['수신일', receivedDate],
+        ['요청업체', ai?.company_name || ''],
+        ['요청자', ai?.sender_info || email.sender || ''],
+        ['메일 제목', email.subject || ''],
+        ['요청 자료', ai?.action_items || ''],
+        ['검색 키워드', keywords],
+        ['핵심 요약', ai?.summary || ''],
+        ['처리 지시사항', '드롭박스에서 관련 파일 검색 후 첨부 회신'],
+        ['발송 방법', '이메일 첨부'],
+        ['담당자', ''],
+        ['완료 기한', '당일 처리'],
+        ['이사님 확인', ai?.needs_approval ? '필요' : '불필요'],
+        ['비고', ai?.note || ''],
+      ];
+      break;
+    }
+    case '영업기회': {
+      sheetTitle = 'KPROS 견적/발주 지시서';
+      // 본문에서 품목 라인 추출 (번호로 시작하는 줄)
+      const itemLines = bodyLines.filter(l => /^\d+[\.\)]\s/.test(l) || /^-\s/.test(l));
+      headers = ['항목', '내용'];
+      rows = [
+        ['문서번호', `KPROS-B-${dateStr}-${email.id}`],
+        ['작성일', formatDateFull(now.toISOString())],
+        ['수신일', receivedDate],
+        ['거래처', ai?.company_name || ''],
+        ['담당자', ai?.sender_info || email.sender || ''],
+        ['메일 제목', email.subject || ''],
+        ['핵심 요약', ai?.summary || ''],
+        ['예상 매출', ai?.estimated_revenue || '-'],
+        ['', ''],
+        ['[요청 품목 상세]', ''],
+      ];
+      if (itemLines.length > 0) {
+        itemLines.forEach((line, i) => {
+          rows.push([`품목 ${i + 1}`, line]);
+        });
+      } else {
+        rows.push(['요청 내용', ai?.action_items || '본문 참조']);
+      }
+      rows.push(
+        ['', ''],
+        ['[처리 지시]', ''],
+        ['단가 확인', '이사님 확인 후 견적서 작성'],
+        ['납기 확인', '재고/생산 일정 확인 필요'],
+        ['견적서 발송', '단가 확정 후 공식 견적서 발송'],
+        ['완료 기한', ''],
+        ['이사님 확인', ai?.needs_approval ? '필요' : '불필요'],
+        ['비고', ai?.note || ''],
+      );
+      break;
+    }
+    case '스케줄링': {
+      sheetTitle = 'KPROS 미팅 일정 지시서';
+      headers = ['항목', '내용'];
+      rows = [
+        ['문서번호', `KPROS-C-${dateStr}-${email.id}`],
+        ['작성일', formatDateFull(now.toISOString())],
+        ['수신일', receivedDate],
+        ['요청 업체', ai?.company_name || ''],
+        ['요청자', ai?.sender_info || email.sender || ''],
+        ['메일 제목', email.subject || ''],
+        ['미팅 목적', ai?.summary || ''],
+        ['', ''],
+        ['[일정 정보]', ''],
+      ];
+      // 본문에서 일정 관련 줄 추출
+      const scheduleLines = bodyLines.filter(l =>
+        /일시|시간|날짜|장소|오전|오후|월|화|수|목|금|Zoom|Teams|화상/.test(l)
+      );
+      if (scheduleLines.length > 0) {
+        scheduleLines.forEach((line, i) => {
+          rows.push([`일정 ${i + 1}`, line]);
+        });
+      } else {
+        rows.push(['제안 일시', '본문 참조']);
+      }
+      rows.push(
+        ['장소/방식', ''],
+        ['', ''],
+        ['[처리 지시]', ''],
+        ['이사님 일정 확인', '확인 후 수락/대안 회신'],
+        ['준비 사항', ''],
+        ['참석자', ''],
+        ['이사님 확인', ai?.needs_approval ? '필요' : '불필요'],
+        ['비고', ai?.note || ''],
+      );
+      break;
+    }
+    case '정보수집': {
+      sheetTitle = 'KPROS 시장정보 분석서';
+      headers = ['항목', '내용'];
+      rows = [
+        ['문서번호', `KPROS-D-${dateStr}-${email.id}`],
+        ['작성일', formatDateFull(now.toISOString())],
+        ['수신일', receivedDate],
+        ['발신처', ai?.company_name || email.sender || ''],
+        ['발신자', ai?.sender_info || ''],
+        ['메일 제목', email.subject || ''],
+        ['', ''],
+        ['[분석 내용]', ''],
+        ['핵심 요약', ai?.summary || ''],
+        ['이사님 보고', ai?.director_report || ''],
+        ['대응 방안', ai?.action_items || ''],
+        ['중요도', ai?.importance || ''],
+        ['이사님 확인', ai?.needs_approval ? '필요' : '불필요'],
+        ['비고', ai?.note || ''],
+      ];
+      break;
+    }
+    default: {
+      sheetTitle = 'KPROS 처리 보고서';
+      headers = ['항목', '내용'];
+      rows = [
+        ['문서번호', `KPROS-E-${dateStr}-${email.id}`],
+        ['작성일', formatDateFull(now.toISOString())],
+        ['수신일', receivedDate],
+        ['발신자', email.sender || ''],
+        ['메일 제목', email.subject || ''],
+        ['분류', `${code}.${category}`],
+        ['핵심 요약', ai?.summary || ''],
+        ['처리 결과', '응대 불필요 - 자동 필터링'],
+        ['비고', ai?.note || ''],
+      ];
+      break;
+    }
+  }
+
+  // CSV 생성
+  const titleRow = [sheetTitle, ''];
+  const csvContent = BOM + [titleRow, headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const typeInfo = INSTRUCTION_TYPES[category] || INSTRUCTION_TYPES['필터링'];
+  const fileName = `KPROS_${typeInfo.label.replace(/\//g, '_')}_${dateStr}_${email.id}.csv`;
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+// ==========================================
+// Excel Export (전체 목록)
 // ==========================================
 
 function exportToExcel(emailList: EmailItem[]) {
@@ -883,6 +1065,12 @@ function EmailDetailView({
           <button onClick={onGenerateDraft} disabled={actionLoading === 'generate'} className="px-3 py-1 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50 transition">
             {actionLoading === 'generate' ? '...' : 'AI 답신생성'}
           </button>
+          <button
+            onClick={() => exportInstructionSheet(email)}
+            className="px-3 py-1 rounded-lg bg-green-600 text-white text-xs font-bold hover:bg-green-700 transition"
+          >
+            {(INSTRUCTION_TYPES[email.category] || INSTRUCTION_TYPES['필터링']).icon} 지시서 내보내기
+          </button>
         </div>
       </div>
 
@@ -974,6 +1162,11 @@ function EmailDetailView({
           </tbody>
         </table>
       </div>
+
+      {/* === Instruction Sheet Preview === */}
+      {email.category !== '필터링' && (
+        <InstructionPreview email={email} ai={ai} />
+      )}
 
       {/* === Dropbox Search === */}
       {ai && ai.search_keywords && ai.search_keywords.length > 0 && (
@@ -1131,6 +1324,93 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between">
       <span className="text-slate-500">{label}</span>
       <span className="text-slate-700 font-medium">{value || '-'}</span>
+    </div>
+  );
+}
+
+// ==========================================
+// Instruction Sheet Preview (지시서 미리보기)
+// ==========================================
+
+function InstructionPreview({ email, ai }: { email: EmailDetail; ai: AiSummaryData | null }) {
+  const category = email.category || '필터링';
+  const typeInfo = INSTRUCTION_TYPES[category] || INSTRUCTION_TYPES['필터링'];
+  const bodyLines = (email.body || '').split('\n').map(l => l.trim()).filter(Boolean);
+
+  const cellL = "bg-green-50 px-3 py-2 text-xs font-bold text-green-800 border border-green-200 whitespace-nowrap align-top w-28";
+  const cellV = "bg-white px-3 py-2 text-xs text-slate-800 border border-green-200";
+
+  const renderCategoryContent = () => {
+    switch (category) {
+      case '자료대응':
+        return (
+          <>
+            <tr><td className={cellL}>요청 업체</td><td className={cellV}>{ai?.company_name || '-'}</td><td className={cellL}>요청자</td><td className={cellV}>{ai?.sender_info || email.sender}</td></tr>
+            <tr><td className={cellL}>요청 자료</td><td className={cellV} colSpan={3}>{ai?.action_items || '본문 참조'}</td></tr>
+            <tr><td className={cellL}>검색 키워드</td><td className={cellV} colSpan={3}>{ai?.search_keywords?.join(', ') || '-'}</td></tr>
+            <tr><td className={cellL}>처리 지시</td><td className={cellV} colSpan={3}>드롭박스에서 관련 파일 검색 후 첨부 회신</td></tr>
+            <tr><td className={cellL}>완료 기한</td><td className={cellV}>당일 처리</td><td className={cellL}>이사님 확인</td><td className={cellV}>{ai?.needs_approval ? '필요' : '불필요'}</td></tr>
+          </>
+        );
+      case '영업기회': {
+        const itemLines = bodyLines.filter(l => /^\d+[\.\)]\s/.test(l) || /^-\s/.test(l));
+        return (
+          <>
+            <tr><td className={cellL}>거래처</td><td className={cellV}>{ai?.company_name || '-'}</td><td className={cellL}>담당자</td><td className={cellV}>{ai?.sender_info || email.sender}</td></tr>
+            <tr><td className={cellL}>예상 매출</td><td className={cellV + " font-bold text-green-700"}>{ai?.estimated_revenue || '-'}</td><td className={cellL}>이사님 확인</td><td className={cellV}>{ai?.needs_approval ? '필요' : '불필요'}</td></tr>
+            {itemLines.length > 0 ? (
+              <tr><td className={cellL}>요청 품목</td><td className={cellV + " whitespace-pre-wrap"} colSpan={3}>{itemLines.join('\n')}</td></tr>
+            ) : (
+              <tr><td className={cellL}>요청 내용</td><td className={cellV} colSpan={3}>{ai?.action_items || '본문 참조'}</td></tr>
+            )}
+            <tr><td className={cellL}>처리 지시</td><td className={cellV} colSpan={3}>이사님 단가 확인 → 견적서 작성 → 발송</td></tr>
+          </>
+        );
+      }
+      case '스케줄링': {
+        const scheduleLines = bodyLines.filter(l => /일시|시간|날짜|장소|오전|오후|월|화|수|목|금|Zoom|Teams|화상/.test(l));
+        return (
+          <>
+            <tr><td className={cellL}>요청 업체</td><td className={cellV}>{ai?.company_name || '-'}</td><td className={cellL}>요청자</td><td className={cellV}>{ai?.sender_info || email.sender}</td></tr>
+            <tr><td className={cellL}>미팅 목적</td><td className={cellV} colSpan={3}>{ai?.summary || '본문 참조'}</td></tr>
+            {scheduleLines.length > 0 && (
+              <tr><td className={cellL}>제안 일정</td><td className={cellV + " whitespace-pre-wrap"} colSpan={3}>{scheduleLines.join('\n')}</td></tr>
+            )}
+            <tr><td className={cellL}>처리 지시</td><td className={cellV} colSpan={3}>이사님 일정 확인 후 수락/대안 회신</td></tr>
+            <tr><td className={cellL}>이사님 확인</td><td className={cellV}>{ai?.needs_approval ? '필요' : '불필요'}</td><td className={cellL}>준비 사항</td><td className={cellV}></td></tr>
+          </>
+        );
+      }
+      case '정보수집':
+        return (
+          <>
+            <tr><td className={cellL}>발신처</td><td className={cellV}>{ai?.company_name || email.sender}</td><td className={cellL}>중요도</td><td className={cellV}>{ai?.importance || '-'}</td></tr>
+            <tr><td className={cellL}>이사님 보고</td><td className={cellV + " whitespace-pre-wrap font-medium"} colSpan={3}>{ai?.director_report || ai?.summary || '-'}</td></tr>
+            <tr><td className={cellL}>대응 방안</td><td className={cellV} colSpan={3}>{ai?.action_items || '-'}</td></tr>
+            <tr><td className={cellL}>이사님 확인</td><td className={cellV}>{ai?.needs_approval ? '필요' : '불필요'}</td><td className={cellL}>비고</td><td className={cellV}>{ai?.note || ''}</td></tr>
+          </>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-green-200 overflow-hidden">
+      <div className="bg-green-700 text-white px-4 py-2 text-xs font-bold flex justify-between items-center">
+        <span>{typeInfo.icon} {typeInfo.label}</span>
+        <button
+          onClick={() => exportInstructionSheet(email)}
+          className="px-3 py-1 rounded bg-green-500 text-white text-[11px] font-bold hover:bg-green-400 transition"
+        >
+          엑셀 내보내기
+        </button>
+      </div>
+      <table className="w-full border-collapse">
+        <tbody>
+          {renderCategoryContent()}
+        </tbody>
+      </table>
     </div>
   );
 }
