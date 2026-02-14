@@ -16,10 +16,7 @@ import type { Env, UserContext } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserContext } }>();
 
-// 미들웨어 설정
-app.use(trimTrailingSlash());
-app.use('*', logger());
-
+// 미들웨어 설정 (CORS를 최우선 적용 → 리다이렉트 응답에도 CORS 헤더 포함)
 app.use('*', async (c, next) => {
   const allowedOrigins = (c.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   const origin = c.req.header('Origin');
@@ -35,6 +32,9 @@ app.use('*', async (c, next) => {
   });
   return corsMiddleware(c, next);
 });
+
+app.use(trimTrailingSlash());
+app.use('*', logger());
 
 // 라우터 등록
 app.route('/api/v1/auth', auth);

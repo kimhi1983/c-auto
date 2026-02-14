@@ -306,6 +306,7 @@ export default function EmailsPage() {
 
   // ---- Fetch email list ----
   const loadEmails = useCallback(async () => {
+    setLoading(true);
     try {
       const params = new URLSearchParams();
       if (statusFilter) params.set('status', statusFilter);
@@ -313,7 +314,7 @@ export default function EmailsPage() {
       if (searchQuery) params.set('search', searchQuery);
       params.set('limit', '100');
 
-      const res = await fetch(apiUrl(`/api/v1/emails/?${params}`), { headers: getAuthHeaders() });
+      const res = await fetch(apiUrl(`/api/v1/emails?${params}`), { headers: getAuthHeaders() });
       if (!res.ok) throw new Error('이메일 목록 조회 실패');
       const data = await res.json();
       if (data.status === 'success') {
@@ -600,23 +601,23 @@ export default function EmailsPage() {
         </div>
       )}
 
-      {/* Stats Bar */}
+      {/* Stats Bar - 상태 필터 */}
       {stats && (
-        <div className="flex gap-2.5 flex-wrap">
-          <StatBadge label="전체" count={stats.total} color="bg-slate-100 text-slate-700" onClick={() => setStatusFilter('')} active={!statusFilter} />
-          <StatBadge label="미확인" count={stats.unread} color="bg-blue-100 text-blue-700" onClick={() => setStatusFilter('unread')} active={statusFilter === 'unread'} />
-          <StatBadge label="검토중" count={stats.in_review} color="bg-orange-100 text-orange-700" onClick={() => setStatusFilter('in_review')} active={statusFilter === 'in_review'} />
-          <StatBadge label="승인" count={stats.approved} color="bg-green-100 text-green-700" onClick={() => setStatusFilter('approved')} active={statusFilter === 'approved'} />
-          <StatBadge label="발송" count={stats.sent} color="bg-emerald-100 text-emerald-700" onClick={() => setStatusFilter('sent')} active={statusFilter === 'sent'} />
+        <div className="flex gap-2 flex-wrap">
+          <StatBadge label="전체" count={stats.total} color="bg-slate-700 text-white" inactiveColor="bg-slate-100 text-slate-600" onClick={() => setStatusFilter('')} active={!statusFilter} />
+          <StatBadge label="미확인" count={stats.unread} color="bg-blue-600 text-white" inactiveColor="bg-blue-50 text-blue-600" onClick={() => setStatusFilter(statusFilter === 'unread' ? '' : 'unread')} active={statusFilter === 'unread'} />
+          <StatBadge label="검토중" count={stats.in_review} color="bg-orange-500 text-white" inactiveColor="bg-orange-50 text-orange-600" onClick={() => setStatusFilter(statusFilter === 'in_review' ? '' : 'in_review')} active={statusFilter === 'in_review'} />
+          <StatBadge label="승인" count={stats.approved} color="bg-green-600 text-white" inactiveColor="bg-green-50 text-green-600" onClick={() => setStatusFilter(statusFilter === 'approved' ? '' : 'approved')} active={statusFilter === 'approved'} />
+          <StatBadge label="발송" count={stats.sent} color="bg-emerald-600 text-white" inactiveColor="bg-emerald-50 text-emerald-600" onClick={() => setStatusFilter(statusFilter === 'sent' ? '' : 'sent')} active={statusFilter === 'sent'} />
         </div>
       )}
 
-      {/* Category Tabs */}
+      {/* Category Tabs - 카테고리 필터 */}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto">
         <button
           onClick={() => setCategoryFilter('')}
-          className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
-            !categoryFilter ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          className={`px-4 py-2.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+            !categoryFilter ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
           }`}
         >
           전체 {stats ? `(${stats.total})` : ''}
@@ -625,14 +626,39 @@ export default function EmailsPage() {
           <button
             key={cat}
             onClick={() => setCategoryFilter(categoryFilter === cat ? '' : cat)}
-            className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
-              categoryFilter === cat ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            className={`px-4 py-2.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+              categoryFilter === cat
+                ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
             }`}
           >
-            {CATEGORY_ICONS[cat] || ''} {CATEGORY_CODES[cat]}.{cat} {stats?.categories[cat] ? `(${stats.categories[cat]})` : ''}
+            {CATEGORY_ICONS[cat] || ''} {CATEGORY_CODES[cat]}.{cat} {stats?.categories[cat] ? `(${stats.categories[cat]})` : '(0)'}
           </button>
         ))}
       </div>
+
+      {/* Active Filter Indicator */}
+      {(statusFilter || categoryFilter) && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-brand-50 border border-brand-200 rounded-xl text-xs animate-fadeIn">
+          <span className="text-brand-700 font-semibold">필터 적용중:</span>
+          {statusFilter && (
+            <span className="px-2 py-0.5 bg-brand-100 text-brand-800 rounded font-bold">
+              {STATUS_MAP[statusFilter] || statusFilter}
+            </span>
+          )}
+          {categoryFilter && (
+            <span className="px-2 py-0.5 bg-brand-100 text-brand-800 rounded font-bold">
+              {CATEGORY_CODES[categoryFilter]}.{categoryFilter}
+            </span>
+          )}
+          <button
+            onClick={() => { setStatusFilter(''); setCategoryFilter(''); }}
+            className="ml-auto text-brand-500 hover:text-brand-700 font-bold cursor-pointer"
+          >
+            초기화 ✕
+          </button>
+        </div>
+      )}
 
       {/* Search */}
       <div className="flex gap-2.5 items-center">
@@ -644,7 +670,7 @@ export default function EmailsPage() {
           onKeyDown={(e) => { if (e.key === 'Enter') loadEmails(); }}
           className="flex-1 px-4 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
         />
-        <button onClick={loadEmails} className="px-4 py-2 rounded-xl border border-slate-200 text-sm hover:bg-slate-50 transition font-medium">
+        <button onClick={loadEmails} className="px-4 py-2 rounded-xl border border-slate-200 text-sm hover:bg-slate-50 transition font-medium cursor-pointer">
           검색
         </button>
       </div>
@@ -686,14 +712,18 @@ export default function EmailsPage() {
 // Sub-components
 // ==========================================
 
-function StatBadge({ label, count, color, onClick, active }: {
-  label: string; count: number; color: string;
+function StatBadge({ label, count, color, inactiveColor, onClick, active }: {
+  label: string; count: number; color: string; inactiveColor: string;
   onClick: () => void; active: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${color} ${active ? 'ring-2 ring-brand-400 ring-offset-1 shadow-sm' : 'opacity-70 hover:opacity-100'}`}
+      className={`px-4 py-2 rounded-full text-xs font-bold transition-all cursor-pointer ${
+        active
+          ? `${color} shadow-md scale-105`
+          : `${inactiveColor} hover:shadow-sm hover:scale-[1.02]`
+      }`}
     >
       {label} {count}
     </button>
