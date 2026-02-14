@@ -22,6 +22,27 @@ const emailsRouter = new Hono<{ Bindings: Env }>();
 emailsRouter.use("*", authMiddleware);
 
 /**
+ * AI가 JSON으로 응답한 경우 텍스트만 추출하는 헬퍼
+ */
+function extractDraftText(raw: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('```')) {
+    try {
+      const cleaned = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+      const text = parsed.draft_reply || parsed.answer || parsed.reply || parsed.content || parsed.response || parsed.text || '';
+      if (text && typeof text === 'string' && text.length > 10) return text;
+    } catch {
+      // JSON 파싱 실패 시 regex로 추출 시도
+      const answerMatch = trimmed.match(/"(?:draft_reply|answer|reply)":\s*"((?:[^"\\]|\\.)*)"/);
+      if (answerMatch) return answerMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    }
+  }
+  return raw;
+}
+
+/**
  * GET /emails - 이메일 목록 (필터링, 페이지네이션)
  */
 emailsRouter.get("/", async (c) => {
@@ -634,6 +655,9 @@ emailsRouter.post("/:id/generate-draft", async (c) => {
   }
 
   const prompt = `다음 비즈니스 이메일에 대한 답신을 작성해주세요.
+
+중요: JSON이 아닌 일반 이메일 본문 텍스트로만 답변하세요. 코드블록(\`\`\`)이나 JSON 형식을 사용하지 마세요.
+
 답변 서두에 "안녕하세요, KPROS입니다."를 포함하고, 마무리에 "KPROS 드림"을 넣어주세요.
 
 발신자: ${email.sender}
@@ -653,7 +677,10 @@ emailsRouter.post("/:id/generate-draft", async (c) => {
 - 계약 효력이 있는 약속 문구(보장합니다, 약속드립니다)를 사용하지 마세요
 - 사내 기밀(원가, 마진율) 및 첨부파일 내용을 추측하여 기재하지 마세요`;
 
-  const draft = await askAILong(c.env.AI, prompt, KPROS_EMAIL_SYSTEM_PROMPT, 1024);
+  let draft = await askAILong(c.env.AI, prompt, undefined, 1024);
+
+  // AI가 JSON으로 응답한 경우 텍스트만 추출
+  draft = extractDraftText(draft);
 
   await db
     .update(emails)

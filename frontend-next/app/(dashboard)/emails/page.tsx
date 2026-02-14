@@ -209,6 +209,36 @@ function getDisplaySummary(email: EmailItem): string {
   return raw || '';
 }
 
+/** AI 답신 초안에서 실제 메일 텍스트만 추출 (JSON 응답 처리) */
+function parseDraftText(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+
+  // JSON 형태인지 확인
+  if (trimmed.startsWith('{') || trimmed.startsWith('```')) {
+    try {
+      // 마크다운 코드블록 제거
+      const cleaned = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+      // 다양한 키에서 텍스트 추출 시도
+      const text = parsed.draft_reply || parsed.answer || parsed.reply || parsed.content || parsed.response || parsed.text || '';
+      if (text && typeof text === 'string' && text.length > 10) {
+        return text;
+      }
+    } catch {
+      // JSON 파싱 실패 시 코드블록만 제거
+      const stripped = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      // 여전히 JSON처럼 보이면 답변 필드 추출 시도 (정규식)
+      const answerMatch = stripped.match(/"(?:draft_reply|answer|reply)":\s*"((?:[^"\\]|\\.)*)"/);
+      if (answerMatch) {
+        return answerMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      }
+      return stripped;
+    }
+  }
+  return raw;
+}
+
 // ==========================================
 // Excel Export
 // ==========================================
@@ -349,7 +379,7 @@ export default function EmailsPage() {
       const data = await res.json();
       if (data.status === 'success') {
         setSelectedEmail(data.data);
-        setDraftText(data.data.draft_response || data.data.ai_draft_response || '');
+        setDraftText(parseDraftText(data.data.draft_response) || parseDraftText(data.data.ai_draft_response) || '');
         setDraftSubject(data.data.draft_subject || `Re: ${data.data.subject}`);
         setView('detail');
         loadEmails();
@@ -513,7 +543,7 @@ export default function EmailsPage() {
       if (!res.ok) throw new Error('답신 생성 실패');
       const data = await res.json();
       if (data.draft) {
-        setDraftText(data.draft);
+        setDraftText(parseDraftText(data.draft));
       }
       alert('AI 답신이 생성되었습니다.');
       await openEmail(selectedEmail.id);
@@ -957,7 +987,7 @@ function EmailDetailView({
             {email.ai_draft_response && (
               <tr>
                 <td className={cellLabel + " !bg-blue-50"}>AI 초안</td>
-                <td className={cellValue + " whitespace-pre-wrap text-blue-800 bg-blue-50/30"}>{email.ai_draft_response}</td>
+                <td className={cellValue + " whitespace-pre-wrap text-blue-800 bg-blue-50/30"}>{parseDraftText(email.ai_draft_response)}</td>
               </tr>
             )}
             <tr>
