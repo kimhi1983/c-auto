@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, desc, like, and, sql, count } from "drizzle-orm";
 import { emails, emailApprovals } from "../db/schema";
 import { authMiddleware, requireApprover } from "../middleware/auth";
-import { classifyEmailAdvanced, askClaudeLong, KPROS_EMAIL_SYSTEM_PROMPT } from "../services/ai";
+import { classifyEmailAdvanced, askAILong, KPROS_EMAIL_SYSTEM_PROMPT } from "../services/ai";
 import {
   isGmailConfigured,
   getGmailAccessToken,
@@ -234,7 +234,7 @@ emailsRouter.post("/fetch", async (c) => {
 
         try {
           const classification = await classifyEmailAdvanced(
-            c.env.ANTHROPIC_API_KEY,
+            c.env.AI,
             parsed.from,
             parsed.subject,
             parsed.body
@@ -567,7 +567,7 @@ emailsRouter.post("/:id/reclassify", async (c) => {
 
   try {
     const classification = await classifyEmailAdvanced(
-      c.env.ANTHROPIC_API_KEY,
+      c.env.AI,
       email.sender || "",
       email.subject || "",
       email.body || ""
@@ -643,11 +643,17 @@ emailsRouter.post("/:id/generate-draft", async (c) => {
 
 카테고리별 답변 규칙:
 - 자료대응: "요청하신 자료를 첨부하여 드립니다." 포함
-- 영업기회: "문의해 주셔서 감사합니다. 검토 후 상세 견적서를 보내드리겠습니다." 포함, 단가 직접 기재 금지
+- 영업기회: "문의해 주셔서 감사합니다. 검토 후 상세 견적서를 보내드리겠습니다." 포함
 - 스케줄링: 수락 버전으로 작성
-- 정보수집/필터링: "답변이 필요하지 않은 메일입니다."로 간략히`;
+- 정보수집/필터링: "답변이 필요하지 않은 메일입니다."로 간략히
 
-  const draft = await askClaudeLong(c.env.ANTHROPIC_API_KEY, prompt, KPROS_EMAIL_SYSTEM_PROMPT, 1024);
+[답신 안전 규칙 - 반드시 준수]
+- 견적서, 단가, 가격, 할인율 등 금액 정보를 절대 포함하지 마세요. "검토 후 별도 안내드리겠습니다." 로 대체
+- 확정되지 않은 납기, 재고, 생산 일정을 기재하지 마세요. "확인 후 안내드리겠습니다." 로 대체
+- 계약 효력이 있는 약속 문구(보장합니다, 약속드립니다)를 사용하지 마세요
+- 사내 기밀(원가, 마진율) 및 첨부파일 내용을 추측하여 기재하지 마세요`;
+
+  const draft = await askAILong(c.env.AI, prompt, KPROS_EMAIL_SYSTEM_PROMPT, 1024);
 
   await db
     .update(emails)
@@ -659,6 +665,75 @@ emailsRouter.post("/:id/generate-draft", async (c) => {
     .where(eq(emails.id, id));
 
   return c.json({ status: "success", draft });
+});
+
+/**
+ * POST /emails/reclassify-all - 전체 이메일 KPROS AI 재분류
+ */
+emailsRouter.post("/reclassify-all", async (c) => {
+  const db = drizzle(c.env.DB);
+
+  const allEmails = await db
+    .select({ id: emails.id, sender: emails.sender, subject: emails.subject, body: emails.body })
+    .from(emails)
+    .orderBy(desc(emails.receivedAt));
+
+  let processed = 0;
+  let failed = 0;
+
+  for (const email of allEmails) {
+    try {
+      const classification = await classifyEmailAdvanced(
+        c.env.AI,
+        email.sender || "",
+        email.subject || "",
+        email.body || ""
+      );
+      const jsonMatch = classification.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const p = JSON.parse(jsonMatch[0]);
+        const aiSummaryJson = JSON.stringify({
+          code: p.code || "E",
+          summary: p.summary || "",
+          importance: p.importance || "하",
+          action_items: p.action_items || "",
+          search_keywords: p.search_keywords || [],
+          director_report: p.director_report || "",
+          needs_approval: p.needs_approval ?? true,
+          company_name: p.company_name || "",
+          sender_info: p.sender_info || "",
+          estimated_revenue: p.estimated_revenue || "",
+          note: p.note || "",
+        });
+
+        await db
+          .update(emails)
+          .set({
+            category: (p.category || "필터링") as any,
+            priority: (p.priority || "medium") as any,
+            aiSummary: aiSummaryJson,
+            aiDraftResponse: p.draft_reply || null,
+            draftSubject: p.draft_subject || null,
+            aiConfidence: p.confidence || 0,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(emails.id, email.id));
+        processed++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+
+  return c.json({
+    status: "success",
+    message: `전체 재분류 완료: ${processed}건 성공, ${failed}건 실패`,
+    processed,
+    failed,
+    total: allEmails.length,
+  });
 });
 
 export default emailsRouter;

@@ -16,6 +16,10 @@ database_id = "5f389eb1-8b1f-4391-bd99-7d994ad014e4"
 binding = "CACHE"
 id = "f79df338acaa4a9abe40e4f90e0fe882"
 
+# Workers AI Binding
+[ai]
+binding = "AI"
+
 # R2 Bucket (파일 저장소)
 # Cloudflare Dashboard에서 R2 활성화 후 아래 주석 해제
 # wrangler r2 bucket create c-auto-files 로 생성

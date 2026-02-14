@@ -10,6 +10,8 @@ export interface Env {
   CACHE?: KVNamespace;
   // R2 Bucket (file storage) - optional until R2 enabled in Dashboard
   FILES?: R2Bucket;
+  // Workers AI
+  AI: Ai;
 
   // Secrets (set via wrangler secret put)
   ANTHROPIC_API_KEY: string;

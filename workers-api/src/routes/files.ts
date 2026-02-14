@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { like, desc, count } from "drizzle-orm";
 import { fileIndex } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
-import { askGemini } from "../services/ai";
+import { askAI } from "../services/ai";
 import type { Env } from "../types";
 
 const files = new Hono<{ Bindings: Env }>();
@@ -81,7 +81,7 @@ files.get("/recommend", async (c) => {
 
 ${context.slice(0, 500)}`;
 
-  const keywordsText = await askGemini(c.env.GOOGLE_API_KEY, keywordPrompt);
+  const keywordsText = await askAI(c.env.AI, keywordPrompt);
   const keywords = keywordsText.split(",").map((k: string) => k.trim());
 
   const db = drizzle(c.env.DB);

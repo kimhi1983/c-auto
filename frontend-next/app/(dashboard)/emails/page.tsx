@@ -793,317 +793,232 @@ function EmailDetailView({
 }) {
   const statusInfo = STATUS_LABELS[email.status] || STATUS_LABELS['read'];
   const ai = parseAiSummary(email.ai_summary);
+  const code = ai?.code || CATEGORY_CODES[email.category] || '';
+
+  const cellLabel = "bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 whitespace-nowrap align-top w-28";
+  const cellValue = "bg-white px-3 py-2 text-xs text-slate-800 border border-slate-200";
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 animate-fadeIn">
-      {/* Left: Email Content */}
-      <div className="lg:col-span-2 space-y-5">
-        {/* Back to list button */}
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition"
-        >
-          <span>&#8592;</span>
-          <span>목록으로 돌아가기</span>
+    <div className="space-y-4 animate-fadeIn">
+      {/* Top Action Bar */}
+      <div className="flex items-center justify-between bg-white rounded-xl border border-slate-200 px-4 py-2.5">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition">
+          <span>&#8592;</span> 목록
         </button>
-
-        {/* Email Header */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6">
-          <div className="flex items-start justify-between mb-3">
-            <h2 className="text-lg font-bold text-slate-900 flex-1">{email.subject}</h2>
-            <div className="flex gap-2 shrink-0 ml-3">
-              <span className={`px-3 py-1 rounded-full text-xs font-bold ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS['필터링']}`}>
-                {CATEGORY_CODES[email.category] ? `${CATEGORY_CODES[email.category]}.` : ''}{email.category}
-              </span>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusInfo.color}`}>
-                {statusInfo.label}
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
-            <span>보낸 사람: <strong className="text-slate-700">{email.sender}</strong></span>
-            {ai?.company_name && <span>회사: <strong className="text-slate-700">{ai.company_name}</strong></span>}
-            {email.recipient && <span>받는 사람: {email.recipient}</span>}
-            <span>{formatDate(email.received_at)}</span>
-            <span>우선순위: {PRIORITY_ICONS[email.priority]} {email.priority}</span>
-            {ai?.importance && (
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                ai.importance === '상' ? 'bg-red-50 text-red-600' : ai.importance === '중' ? 'bg-yellow-50 text-yellow-600' : 'bg-gray-50 text-gray-500'
-              }`}>
-                중요도: {ai.importance}
-              </span>
-            )}
-            {ai?.needs_approval && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-600">
-                이사님 확인 필요
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Email Body */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6">
-          <h3 className="text-sm font-bold text-slate-700 mb-3">이메일 본문</h3>
-          <div className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
-            {email.body || '(본문 없음)'}
-          </div>
-        </div>
-
-        {/* AI Analysis - Enhanced */}
-        <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-2xl border border-purple-200/80 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-purple-800">KPROS AI 분석 결과</h3>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-purple-600 font-medium">신뢰도: {email.ai_confidence}%</span>
-              <button
-                onClick={onReclassify}
-                disabled={actionLoading === 'reclassify'}
-                className="px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-xs font-bold hover:bg-purple-200 disabled:opacity-50 transition"
-              >
-                {actionLoading === 'reclassify' ? '분석중...' : '재분류'}
-              </button>
-            </div>
-          </div>
-
-          {ai ? (
-            <div className="space-y-3">
-              {/* Summary */}
-              <div className="bg-white/60 rounded-xl p-3">
-                <div className="text-xs font-bold text-purple-600 mb-1">📋 핵심 요약</div>
-                <p className="text-sm text-purple-800">{ai.summary}</p>
-              </div>
-
-              {/* Director Report */}
-              {ai.director_report && (
-                <div className="bg-white/60 rounded-xl p-3">
-                  <div className="text-xs font-bold text-purple-600 mb-1">📌 이사님 보고</div>
-                  <p className="text-sm text-purple-800 whitespace-pre-wrap">{ai.director_report}</p>
-                </div>
-              )}
-
-              {/* Action Items */}
-              {ai.action_items && (
-                <div className="bg-white/60 rounded-xl p-3">
-                  <div className="text-xs font-bold text-purple-600 mb-1">⚡ 액션 플랜</div>
-                  <p className="text-sm text-purple-800 whitespace-pre-wrap">{ai.action_items}</p>
-                </div>
-              )}
-
-              {/* Search Keywords (A카테고리) */}
-              {ai.search_keywords && ai.search_keywords.length > 0 && (
-                <div className="bg-white/60 rounded-xl p-3">
-                  <div className="text-xs font-bold text-purple-600 mb-1">🔍 드롭박스 검색 키워드</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {ai.search_keywords.map((kw, i) => (
-                      <span key={i} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">{kw}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Estimated Revenue (B카테고리) */}
-              {ai.estimated_revenue && (
-                <div className="bg-white/60 rounded-xl p-3">
-                  <div className="text-xs font-bold text-purple-600 mb-1">💰 예상 매출</div>
-                  <p className="text-sm text-purple-800 font-semibold">{ai.estimated_revenue}</p>
-                </div>
-              )}
-
-              {/* Note */}
-              {ai.note && (
-                <div className="text-xs text-purple-500 mt-1">비고: {ai.note}</div>
-              )}
-            </div>
-          ) : (
-            /* fallback for legacy plain-text aiSummary */
-            email.ai_summary && (
-              <p className="text-sm text-purple-700">
-                <strong>요약:</strong> {email.ai_summary}
-              </p>
-            )
+        <div className="flex items-center gap-2">
+          <span className={`px-3 py-1 rounded-full text-xs font-bold ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS['필터링']}`}>
+            {code ? `${code}.` : ''}{email.category}
+          </span>
+          <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusInfo.color}`}>{statusInfo.label}</span>
+          {ai?.importance && (
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${ai.importance === '상' ? 'bg-red-50 text-red-600' : ai.importance === '중' ? 'bg-yellow-50 text-yellow-600' : 'bg-gray-50 text-gray-500'}`}>
+              {ai.importance === '상' ? '긴급' : ai.importance === '중' ? '중요' : '일반'}
+            </span>
           )}
-
-          {/* AI Draft Response */}
-          {email.ai_draft_response && (
-            <div className="mt-4">
-              <div className="text-xs font-bold text-purple-600 mb-1.5">✉️ AI 자동 답신 초안:</div>
-              <div className="text-sm text-purple-800 bg-white/60 rounded-xl p-4 whitespace-pre-wrap">
-                {email.ai_draft_response}
-              </div>
-            </div>
-          )}
+          {ai?.needs_approval && <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-600">이사님 확인</span>}
+          <span className="text-[10px] text-slate-400">AI {email.ai_confidence}%</span>
+          <button onClick={onReclassify} disabled={actionLoading === 'reclassify'} className="px-3 py-1 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 disabled:opacity-50 transition">
+            {actionLoading === 'reclassify' ? '...' : 'AI 재분류'}
+          </button>
+          <button onClick={onGenerateDraft} disabled={actionLoading === 'generate'} className="px-3 py-1 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50 transition">
+            {actionLoading === 'generate' ? '...' : 'AI 답신생성'}
+          </button>
         </div>
-
-        {/* Dropbox Search - A카테고리(자료대응) */}
-        {ai && ai.search_keywords && ai.search_keywords.length > 0 && (
-          <DropboxSearchPanel keywords={ai.search_keywords} />
-        )}
-
-        {/* Draft Editor */}
-        {['read', 'draft', 'rejected'].includes(email.status) && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-slate-700">답신 작성</h3>
-              {!email.ai_draft_response && (
-                <button
-                  onClick={onGenerateDraft}
-                  disabled={actionLoading === 'generate'}
-                  className="px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-xs font-bold hover:bg-purple-200 disabled:opacity-50 transition"
-                >
-                  {actionLoading === 'generate' ? 'AI 생성중...' : '🤖 AI 답신 생성'}
-                </button>
-              )}
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-slate-500 mb-1.5 block font-medium">답신 제목</label>
-                <input
-                  type="text"
-                  value={draftSubject}
-                  onChange={(e) => setDraftSubject(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 mb-1.5 block font-medium">답신 내용</label>
-                <textarea
-                  value={draftText}
-                  onChange={(e) => setDraftText(e.target.value)}
-                  rows={8}
-                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none resize-y transition"
-                />
-              </div>
-              <div className="flex gap-2.5">
-                <button
-                  onClick={onSaveDraft}
-                  disabled={actionLoading === 'save'}
-                  className="px-5 py-2 rounded-xl border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition"
-                >
-                  {actionLoading === 'save' ? '저장중...' : '초안 저장'}
-                </button>
-                <button
-                  onClick={onSubmit}
-                  disabled={actionLoading === 'submit'}
-                  className="px-5 py-2 rounded-xl bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-50 transition"
-                >
-                  {actionLoading === 'submit' ? '제출중...' : '검토 요청'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Approval Actions (for approver/admin) */}
-        {email.status === 'in_review' && (
-          <div className="bg-white rounded-2xl border border-orange-200 p-6">
-            <h3 className="text-sm font-bold text-orange-700 mb-3">승인/반려</h3>
-            <textarea
-              value={approvalComment}
-              onChange={(e) => setApprovalComment(e.target.value)}
-              placeholder="코멘트를 입력하세요 (선택)"
-              rows={3}
-              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none mb-4 transition"
-            />
-            <div className="flex gap-2.5">
-              <button
-                onClick={onApprove}
-                disabled={actionLoading === 'approve'}
-                className="px-5 py-2 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition"
-              >
-                {actionLoading === 'approve' ? '처리중...' : '승인'}
-              </button>
-              <button
-                onClick={onReject}
-                disabled={actionLoading === 'reject'}
-                className="px-5 py-2 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition"
-              >
-                {actionLoading === 'reject' ? '처리중...' : '반려'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Send Button (for approved emails) */}
-        {email.status === 'approved' && (
-          <div className="bg-white rounded-2xl border border-green-200 p-6">
-            <h3 className="text-sm font-bold text-green-700 mb-3">발송 준비 완료</h3>
-            <p className="text-xs text-slate-500 mb-3">
-              승인된 답신을 {email.sender}에게 발송합니다.
-            </p>
-            <button
-              onClick={onSend}
-              disabled={actionLoading === 'send'}
-              className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition"
-            >
-              {actionLoading === 'send' ? '발송중...' : '이메일 발송'}
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Right Sidebar */}
-      <div className="space-y-4">
-        {/* Workflow Status */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 className="text-sm font-bold text-slate-900 mb-3">워크플로우</h3>
-          <WorkflowSteps status={email.status} />
-        </div>
+      {/* === Sheet 1: 메일 정보 + 본문 === */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-slate-700 text-white px-4 py-2 text-xs font-bold">수신 메일 정보</div>
+        <table className="w-full border-collapse">
+          <tbody>
+            <tr>
+              <td className={cellLabel}>제목</td>
+              <td className={cellValue} colSpan={3}><span className="font-semibold text-sm">{email.subject}</span></td>
+            </tr>
+            <tr>
+              <td className={cellLabel}>보낸 사람</td>
+              <td className={cellValue}>{email.sender}</td>
+              <td className={cellLabel}>회사명</td>
+              <td className={cellValue}>{ai?.company_name || '-'}</td>
+            </tr>
+            <tr>
+              <td className={cellLabel}>받는 사람</td>
+              <td className={cellValue}>{email.recipient || '-'}</td>
+              <td className={cellLabel}>수신일시</td>
+              <td className={cellValue}>{formatDateFull(email.received_at)}</td>
+            </tr>
+            <tr>
+              <td className={cellLabel}>본문</td>
+              <td className={cellValue + " whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto"} colSpan={3}>
+                {email.body || '(본문 없음)'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-        {/* Approval History */}
-        {email.approvals.length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-sm font-bold text-slate-900 mb-3">승인 이력</h3>
-            <div className="space-y-2.5">
-              {email.approvals.map((a) => (
-                <div key={a.id} className="text-xs border-b border-slate-50 pb-2.5 last:border-0">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-700">{a.stage}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      a.status === 'approved' ? 'bg-green-100 text-green-700' :
-                      a.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                      'bg-yellow-100 text-yellow-700'
-                    }`}>
+      {/* === Sheet 2: AI 분석 결과 === */}
+      <div className="bg-white rounded-xl border border-purple-200 overflow-hidden">
+        <div className="bg-purple-700 text-white px-4 py-2 text-xs font-bold flex justify-between items-center">
+          <span>KPROS AI 분석 결과</span>
+          <span className="text-purple-200 text-[10px]">신뢰도 {email.ai_confidence}%</span>
+        </div>
+        <table className="w-full border-collapse">
+          <tbody>
+            <tr>
+              <td className={cellLabel + " !bg-purple-50"}>분류</td>
+              <td className={cellValue}><span className="font-bold">{code}.{email.category}</span> | 우선순위: {PRIORITY_ICONS[email.priority]} {email.priority} | 중요도: {ai?.importance || '-'}</td>
+            </tr>
+            <tr>
+              <td className={cellLabel + " !bg-purple-50"}>핵심 요약</td>
+              <td className={cellValue}>{ai?.summary || email.ai_summary || '-'}</td>
+            </tr>
+            {ai?.director_report && (
+              <tr>
+                <td className={cellLabel + " !bg-purple-50"}>이사님 보고</td>
+                <td className={cellValue + " whitespace-pre-wrap font-medium text-purple-800"}>{ai.director_report}</td>
+              </tr>
+            )}
+            {ai?.action_items && (
+              <tr>
+                <td className={cellLabel + " !bg-purple-50"}>액션 플랜</td>
+                <td className={cellValue + " whitespace-pre-wrap"}>{ai.action_items}</td>
+              </tr>
+            )}
+            {ai?.search_keywords && ai.search_keywords.length > 0 && (
+              <tr>
+                <td className={cellLabel + " !bg-purple-50"}>검색 키워드</td>
+                <td className={cellValue}>
+                  <div className="flex flex-wrap gap-1">{ai.search_keywords.map((kw, i) => (
+                    <span key={i} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[11px] font-medium">{kw}</span>
+                  ))}</div>
+                </td>
+              </tr>
+            )}
+            {ai?.estimated_revenue && (
+              <tr>
+                <td className={cellLabel + " !bg-purple-50"}>예상 매출</td>
+                <td className={cellValue + " font-bold text-green-700"}>{ai.estimated_revenue}</td>
+              </tr>
+            )}
+            <tr>
+              <td className={cellLabel + " !bg-purple-50"}>발신자 정보</td>
+              <td className={cellValue}>{ai?.sender_info || '-'} | {ai?.company_name || '-'}</td>
+            </tr>
+            {ai?.note && (
+              <tr>
+                <td className={cellLabel + " !bg-purple-50"}>비고</td>
+                <td className={cellValue}>{ai.note}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* === Dropbox Search === */}
+      {ai && ai.search_keywords && ai.search_keywords.length > 0 && (
+        <DropboxSearchPanel keywords={ai.search_keywords} />
+      )}
+
+      {/* === Sheet 3: AI 답신 초안 + 편집 === */}
+      <div className="bg-white rounded-xl border border-blue-200 overflow-hidden">
+        <div className="bg-blue-700 text-white px-4 py-2 text-xs font-bold flex justify-between items-center">
+          <span>답신 초안</span>
+          <div className="flex gap-2">
+            {['read', 'draft', 'rejected'].includes(email.status) && (
+              <>
+                <button onClick={onSaveDraft} disabled={actionLoading === 'save'} className="px-3 py-1 rounded bg-blue-500 text-white text-[11px] font-bold hover:bg-blue-400 disabled:opacity-50 transition">
+                  {actionLoading === 'save' ? '...' : '저장'}
+                </button>
+                <button onClick={onSubmit} disabled={actionLoading === 'submit'} className="px-3 py-1 rounded bg-yellow-500 text-white text-[11px] font-bold hover:bg-yellow-400 disabled:opacity-50 transition">
+                  {actionLoading === 'submit' ? '...' : '검토요청'}
+                </button>
+              </>
+            )}
+            {email.status === 'in_review' && (
+              <>
+                <button onClick={onApprove} disabled={actionLoading === 'approve'} className="px-3 py-1 rounded bg-green-500 text-white text-[11px] font-bold hover:bg-green-400 disabled:opacity-50 transition">
+                  {actionLoading === 'approve' ? '...' : '승인'}
+                </button>
+                <button onClick={onReject} disabled={actionLoading === 'reject'} className="px-3 py-1 rounded bg-red-500 text-white text-[11px] font-bold hover:bg-red-400 disabled:opacity-50 transition">
+                  {actionLoading === 'reject' ? '...' : '반려'}
+                </button>
+              </>
+            )}
+            {email.status === 'approved' && (
+              <button onClick={onSend} disabled={actionLoading === 'send'} className="px-3 py-1 rounded bg-emerald-500 text-white text-[11px] font-bold hover:bg-emerald-400 disabled:opacity-50 transition">
+                {actionLoading === 'send' ? '...' : '발송'}
+              </button>
+            )}
+          </div>
+        </div>
+        <table className="w-full border-collapse">
+          <tbody>
+            {email.ai_draft_response && (
+              <tr>
+                <td className={cellLabel + " !bg-blue-50"}>AI 초안</td>
+                <td className={cellValue + " whitespace-pre-wrap text-blue-800 bg-blue-50/30"}>{email.ai_draft_response}</td>
+              </tr>
+            )}
+            <tr>
+              <td className={cellLabel + " !bg-blue-50"}>답신 제목</td>
+              <td className={cellValue + " p-0"}>
+                <input type="text" value={draftSubject} onChange={(e) => setDraftSubject(e.target.value)}
+                  className="w-full px-3 py-2 text-xs outline-none bg-transparent focus:bg-blue-50/50 transition" />
+              </td>
+            </tr>
+            <tr>
+              <td className={cellLabel + " !bg-blue-50"}>답신 내용</td>
+              <td className={cellValue + " p-0"}>
+                <textarea value={draftText} onChange={(e) => setDraftText(e.target.value)} rows={6}
+                  className="w-full px-3 py-2 text-xs outline-none bg-transparent focus:bg-blue-50/50 resize-y transition" />
+              </td>
+            </tr>
+            {email.status === 'in_review' && (
+              <tr>
+                <td className={cellLabel + " !bg-orange-50"}>승인 코멘트</td>
+                <td className={cellValue + " p-0"}>
+                  <textarea value={approvalComment} onChange={(e) => setApprovalComment(e.target.value)} rows={2} placeholder="코멘트 (선택)"
+                    className="w-full px-3 py-2 text-xs outline-none bg-transparent focus:bg-orange-50/50 transition" />
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* === Sheet 4: 워크플로우 + 이력 === */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="bg-slate-600 text-white px-4 py-2 text-xs font-bold">워크플로우</div>
+          <div className="p-4"><WorkflowSteps status={email.status} /></div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="bg-slate-600 text-white px-4 py-2 text-xs font-bold">처리 이력</div>
+          <table className="w-full border-collapse">
+            <tbody>
+              <tr><td className={cellLabel}>수신일</td><td className={cellValue}>{formatDateFull(email.received_at)}</td></tr>
+              <tr><td className={cellLabel}>처리일</td><td className={cellValue}>{formatDateFull(email.processed_at)}</td></tr>
+              {email.sent_at && <tr><td className={cellLabel}>발송일</td><td className={cellValue}>{formatDateFull(email.sent_at)}</td></tr>}
+              {email.approvals.length > 0 && email.approvals.map((a) => (
+                <tr key={a.id}>
+                  <td className={cellLabel}>{a.stage}</td>
+                  <td className={cellValue}>
+                    <span className={a.status === 'approved' ? 'text-green-600 font-bold' : a.status === 'rejected' ? 'text-red-600 font-bold' : ''}>
                       {a.status === 'approved' ? '승인' : a.status === 'rejected' ? '반려' : '대기'}
                     </span>
-                  </div>
-                  {a.comments && <p className="text-slate-500 mt-1">{a.comments}</p>}
-                  <p className="text-slate-400 text-[11px] mt-0.5">{formatDate(a.approved_at || a.created_at)}</p>
-                </div>
+                    {a.comments && <span className="text-slate-400 ml-2">{a.comments}</span>}
+                  </td>
+                </tr>
               ))}
-            </div>
-          </div>
-        )}
-
-        {/* Attachments */}
-        {email.attachments.length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-sm font-bold text-slate-900 mb-3">첨부파일</h3>
-            <div className="space-y-2">
-              {email.attachments.map((att) => (
-                <div key={att.id} className="flex items-center gap-2 text-xs text-slate-600">
-                  <span>📎</span>
-                  <span className="truncate">{att.file_name}</span>
-                  <span className="text-slate-400 shrink-0">
-                    {(att.file_size / 1024).toFixed(1)}KB
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Email Info */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 className="text-sm font-bold text-slate-900 mb-3">상세 정보</h3>
-          <div className="space-y-2.5 text-xs">
-            <InfoRow label="수신일" value={formatDate(email.received_at)} />
-            <InfoRow label="처리일" value={formatDate(email.processed_at)} />
-            {email.sent_at && <InfoRow label="발송일" value={formatDate(email.sent_at)} />}
-            <InfoRow label="우선순위" value={`${PRIORITY_ICONS[email.priority]} ${email.priority}`} />
-            <InfoRow label="AI 신뢰도" value={`${email.ai_confidence}%`} />
-            {ai?.sender_info && <InfoRow label="발신자 정보" value={ai.sender_info} />}
-            {ai?.company_name && <InfoRow label="회사명" value={ai.company_name} />}
-          </div>
+              {email.attachments.length > 0 && (
+                <tr>
+                  <td className={cellLabel}>첨부파일</td>
+                  <td className={cellValue}>{email.attachments.map(a => `${a.file_name} (${(a.file_size/1024).toFixed(0)}KB)`).join(', ')}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

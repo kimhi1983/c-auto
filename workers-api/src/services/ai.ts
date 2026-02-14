@@ -1,66 +1,64 @@
 /**
- * AI Service - Claude (Anthropic) + Gemini (Google) 연동
+ * AI Service - Cloudflare Workers AI 기반
  * KPROS 이메일 자동화 시스템 v2
+ *
+ * Anthropic/Gemini API는 Workers에서 IP 차단 이슈로
+ * Cloudflare Workers AI (@cf/meta/llama-3.1-70b-instruct) 사용
  */
-import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const WORKERS_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct";
 
 /**
- * Claude API 호출 (짧은 응답)
+ * Workers AI 호출
  */
-export async function askClaude(
-  apiKey: string,
+async function callWorkersAI(
+  ai: Ai,
   prompt: string,
-  model = "claude-sonnet-4-20250514",
-  maxTokens = 1024
+  systemPrompt?: string,
+  maxTokens = 2048
 ): Promise<string> {
-  const client = new Anthropic({ apiKey });
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
 
-  const message = await client.messages.create({
-    model,
+  if (systemPrompt) {
+    messages.push({ role: "system", content: systemPrompt });
+  }
+  messages.push({ role: "user", content: prompt });
+
+  const response = await ai.run(WORKERS_AI_MODEL as any, {
+    messages,
     max_tokens: maxTokens,
-    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
   });
 
-  const block = message.content[0];
-  return block.type === "text" ? block.text : "";
+  return (response as any).response || "";
 }
 
 /**
- * Claude API 호출 (장문 응답 - 문서 작성용)
+ * AI 호출 (짧은 응답)
  */
-export async function askClaudeLong(
-  apiKey: string,
+export async function askAI(
+  ai: Ai,
+  prompt: string,
+  maxTokens = 1024
+): Promise<string> {
+  return callWorkersAI(ai, prompt, undefined, maxTokens);
+}
+
+/**
+ * AI 호출 (장문 응답 - 문서 작성용)
+ */
+export async function askAILong(
+  ai: Ai,
   prompt: string,
   systemPrompt?: string,
   maxTokens = 4096
 ): Promise<string> {
-  const client = new Anthropic({ apiKey });
-
-  const message = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: maxTokens,
-    system: systemPrompt || "당신은 한국 비즈니스 문서 작성 전문가입니다.",
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const block = message.content[0];
-  return block.type === "text" ? block.text : "";
-}
-
-/**
- * Gemini API 호출 (빠른 분류/추출용)
- */
-export async function askGemini(
-  apiKey: string,
-  prompt: string,
-  model = "gemini-2.0-flash"
-): Promise<string> {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const geminiModel = genAI.getGenerativeModel({ model });
-
-  const result = await geminiModel.generateContent(prompt);
-  return result.response.text();
+  return callWorkersAI(
+    ai,
+    prompt,
+    systemPrompt || "당신은 한국 비즈니스 문서 작성 전문가입니다.",
+    maxTokens
+  );
 }
 
 // ─── AI 문서 작성 시스템 프롬프트 ───
@@ -126,7 +124,15 @@ E: 위 A~D에 해당하지 않으며 대량발송 형식이거나 업무와 무�
 ■ D: 원료명/변동유형/변동폭/적용시점 추출, 원가 영향 1줄 분석, 외부 답변 불필요
 ■ E: 응대 없음, 1줄 기록만
 
-반드시 JSON만 출력하세요.`;
+[답신 안전 규칙 - 반드시 준수]
+1. 견적서, 단가, 가격 정보를 답신에 절대 포함하지 마세요. "검토 후 별도 안내" 문구로 대체합니다.
+2. 사내 기밀 자료(원가, 마진율, 내부 문서)를 언급하지 마세요.
+3. 확정되지 않은 납기/재고/생산 일정을 답신에 기재하지 마세요. "확인 후 안내" 문구로 대체합니다.
+4. 계약, 법적 효력이 있는 약속 문구(~보장합니다, ~약속드립니다)를 사용하지 마세요.
+5. B카테고리 답신에서 구체적 금액/단가/할인율을 절대 기재하지 마세요.
+6. 첨부파일 내용을 추측하여 답신에 기재하지 마세요.
+
+반드시 JSON만 출력하세요. 다른 설명이나 마크다운 없이 순수 JSON 객체만 출력하세요.`;
 
 export function classifyEmailPrompt(sender: string, subject: string, body: string): string {
   return `다음 수신 이메일을 분석하여 정확히 JSON 형식으로만 답하세요. 다른 설명 없이 JSON만 출력.
@@ -159,16 +165,16 @@ ${(body || '').slice(0, 2000)}
 }
 
 /**
- * KPROS 이메일 고급 분류 - 시스템 프롬프트 포함
+ * KPROS 이메일 고급 분류 - Workers AI
  */
 export async function classifyEmailAdvanced(
-  apiKey: string,
+  ai: Ai,
   sender: string,
   subject: string,
   body: string
 ): Promise<string> {
-  return askClaudeLong(
-    apiKey,
+  return askAILong(
+    ai,
     classifyEmailPrompt(sender, subject, body),
     KPROS_EMAIL_SYSTEM_PROMPT,
     2048
