@@ -10,6 +10,8 @@ import archives from './routes/archives';
 import usersRouter from './routes/users';
 import files from './routes/files';
 import aiDocs from './routes/ai-docs';
+import gmail from './routes/gmail';
+import dropbox from './routes/dropbox';
 import type { Env, UserContext } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserContext } }>();
@@ -43,6 +45,8 @@ app.route('/api/v1/archives', archives);
 app.route('/api/v1/users', usersRouter);
 app.route('/api/v1/files', files);
 app.route('/api/v1/ai-docs', aiDocs);
+app.route('/api/v1/gmail', gmail);
+app.route('/api/v1/dropbox', dropbox);
 
 // 상태 확인 라우트
 app.get('/api/status', (c) => {

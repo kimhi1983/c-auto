@@ -14,9 +14,26 @@ interface EmailItem {
   category: string;
   priority: string;
   status: string;
-  ai_summary: string | null;
-  received_at: string | null;
-  created_at: string | null;
+  aiSummary?: string | null;
+  ai_summary?: string | null;
+  received_at?: string | null;
+  receivedAt?: string | null;
+  created_at?: string | null;
+  createdAt?: string | null;
+}
+
+interface AiSummaryData {
+  code: string;
+  summary: string;
+  importance: string;
+  action_items: string;
+  search_keywords: string[];
+  director_report: string;
+  needs_approval: boolean;
+  company_name: string;
+  sender_info: string;
+  estimated_revenue: string;
+  note: string;
 }
 
 interface EmailDetail {
@@ -69,11 +86,27 @@ interface EmailStats {
 }
 
 // ==========================================
-// Constants
+// Constants - KPROS 5분류
 // ==========================================
 
+const CATEGORIES = ['자료대응', '영업기회', '스케줄링', '정보수집', '필터링'] as const;
+
+const CATEGORY_CODES: Record<string, string> = {
+  '자료대응': 'A',
+  '영업기회': 'B',
+  '스케줄링': 'C',
+  '정보수집': 'D',
+  '필터링': 'E',
+};
+
 const CATEGORY_COLORS: Record<string, string> = {
-  '발주': 'bg-blue-100 text-blue-700',
+  '자료대응': 'bg-blue-100 text-blue-700',
+  '영업기회': 'bg-red-100 text-red-700',
+  '스케줄링': 'bg-pink-100 text-pink-700',
+  '정보수집': 'bg-amber-100 text-amber-700',
+  '필터링': 'bg-gray-100 text-gray-500',
+  // 레거시 호환
+  '발주': 'bg-red-100 text-red-700',
   '요청': 'bg-indigo-100 text-indigo-700',
   '견적요청': 'bg-purple-100 text-purple-700',
   '문의': 'bg-yellow-100 text-yellow-700',
@@ -81,6 +114,14 @@ const CATEGORY_COLORS: Record<string, string> = {
   '미팅': 'bg-pink-100 text-pink-700',
   '클레임': 'bg-red-100 text-red-700',
   '기타': 'bg-gray-100 text-gray-700',
+};
+
+const CATEGORY_ICONS: Record<string, string> = {
+  '자료대응': '📁',
+  '영업기회': '💰',
+  '스케줄링': '📅',
+  '정보수집': '📊',
+  '필터링': '🚫',
 };
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -100,6 +141,17 @@ const PRIORITY_ICONS: Record<string, string> = {
   low: '🟢',
 };
 
+const STATUS_MAP: Record<string, string> = {
+  unread: '미확인',
+  read: '확인',
+  draft: '초안',
+  in_review: '검토중',
+  approved: '승인',
+  rejected: '반려',
+  sent: '발송완료',
+  archived: '보관',
+};
+
 // ==========================================
 // Helpers
 // ==========================================
@@ -108,7 +160,7 @@ function getAuthHeaders(): Record<string, string> {
   return authJsonHeaders();
 }
 
-function formatDate(dateStr: string | null): string {
+function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '';
   try {
     return new Date(dateStr).toLocaleDateString('ko-KR', {
@@ -120,6 +172,86 @@ function formatDate(dateStr: string | null): string {
   } catch {
     return dateStr;
   }
+}
+
+function formatDateFull(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
+  try {
+    return new Date(dateStr).toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+function parseAiSummary(raw: string | null | undefined): AiSummaryData | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed.summary) {
+      return parsed as AiSummaryData;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function getDisplaySummary(email: EmailItem): string {
+  const raw = email.aiSummary || email.ai_summary;
+  const parsed = parseAiSummary(raw);
+  if (parsed) return parsed.summary;
+  return raw || '';
+}
+
+// ==========================================
+// Excel Export
+// ==========================================
+
+function exportToExcel(emailList: EmailItem[]) {
+  const BOM = '\uFEFF';
+  const headers = ['날짜', '분류코드', '카테고리명', '발신자', '회사명', '메일 제목', '핵심 요약', '중요도', '처리 내용', '첨부파일', '처리 상태', '이사님 확인', '예상 매출', '비고'];
+
+  const rows = emailList.map((email) => {
+    const ai = parseAiSummary(email.aiSummary || email.ai_summary);
+    const date = formatDateFull(email.received_at || email.receivedAt || email.created_at || email.createdAt);
+    const code = ai?.code || CATEGORY_CODES[email.category] || '';
+    const category = email.category || '';
+    const sender = email.sender || '';
+    const company = ai?.company_name || '';
+    const subject = email.subject || '';
+    const summary = ai?.summary || '';
+    const importance = ai?.importance || '';
+    const actionItems = ai?.action_items || '';
+    const attachments = '';
+    const status = STATUS_MAP[email.status] || email.status;
+    const needsApproval = ai?.needs_approval ? '필요' : '불필요';
+    const revenue = ai?.estimated_revenue || '';
+    const note = ai?.note || '';
+
+    return [date, code, category, sender, company, subject, summary, importance, actionItems, attachments, status, needsApproval, revenue, note];
+  });
+
+  const csvContent = BOM + [headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const fileName = `KPROS_업무일지_${dateStr}.csv`;
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 // ==========================================
@@ -182,7 +314,7 @@ export default function EmailsPage() {
     loadStats();
   }, [loadEmails, loadStats]);
 
-  // ---- Fetch new emails from Hiworks ----
+  // ---- Fetch new emails ----
   const fetchNewEmails = async () => {
     setFetching(true);
     setError('');
@@ -200,7 +332,7 @@ export default function EmailsPage() {
         setError('');
         await loadEmails();
         await loadStats();
-        alert(`${data.count}개 이메일이 처리되었습니다.`);
+        alert(`${data.count}개 이메일이 처리되었습니다. (${data.source})`);
       }
     } catch (err: any) {
       setError(err.message);
@@ -220,7 +352,6 @@ export default function EmailsPage() {
         setDraftText(data.data.draft_response || data.data.ai_draft_response || '');
         setDraftSubject(data.data.draft_subject || `Re: ${data.data.subject}`);
         setView('detail');
-        // Refresh list to update read status
         loadEmails();
       }
     } catch (err: any) {
@@ -360,9 +491,32 @@ export default function EmailsPage() {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error('재분류 실패');
-      alert('AI 재분류가 완료되었습니다.');
+      alert('KPROS AI 재분류가 완료되었습니다.');
       await openEmail(selectedEmail.id);
       await loadEmails();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  // ---- Generate Draft ----
+  const generateDraft = async () => {
+    if (!selectedEmail) return;
+    setActionLoading('generate');
+    try {
+      const res = await fetch(apiUrl(`/api/v1/emails/${selectedEmail.id}/generate-draft`), {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error('답신 생성 실패');
+      const data = await res.json();
+      if (data.draft) {
+        setDraftText(data.draft);
+      }
+      alert('AI 답신이 생성되었습니다.');
+      await openEmail(selectedEmail.id);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -380,7 +534,7 @@ export default function EmailsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">이메일 관리</h1>
-          <p className="text-sm text-slate-500 mt-1">AI 기반 8개 카테고리 분류 및 승인 워크플로우</p>
+          <p className="text-sm text-slate-500 mt-1">KPROS AI 스마트 비서 - 5개 카테고리 자동 분류 및 대응</p>
         </div>
         <div className="flex gap-2">
           {view !== 'list' && (
@@ -388,7 +542,15 @@ export default function EmailsPage() {
               onClick={() => { setView('list'); setSelectedEmail(null); }}
               className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
             >
-              ← 목록
+              &#8592; 목록
+            </button>
+          )}
+          {view === 'list' && emails.length > 0 && (
+            <button
+              onClick={() => exportToExcel(emails)}
+              className="px-4 py-2 rounded-xl border border-green-300 text-sm font-medium text-green-700 hover:bg-green-50 transition"
+            >
+              📥 엑셀 내보내기
             </button>
           )}
           <button
@@ -419,7 +581,30 @@ export default function EmailsPage() {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Category Tabs */}
+      <div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto">
+        <button
+          onClick={() => setCategoryFilter('')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
+            !categoryFilter ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          전체 {stats ? `(${stats.total})` : ''}
+        </button>
+        {CATEGORIES.map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setCategoryFilter(categoryFilter === cat ? '' : cat)}
+            className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
+              categoryFilter === cat ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {CATEGORY_ICONS[cat] || ''} {CATEGORY_CODES[cat]}.{cat} {stats?.categories[cat] ? `(${stats.categories[cat]})` : ''}
+          </button>
+        ))}
+      </div>
+
+      {/* Search */}
       <div className="flex gap-2.5 items-center">
         <input
           type="text"
@@ -429,16 +614,6 @@ export default function EmailsPage() {
           onKeyDown={(e) => { if (e.key === 'Enter') loadEmails(); }}
           className="flex-1 px-4 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
         />
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="px-4 py-2 border border-slate-200 rounded-xl text-sm bg-white"
-        >
-          <option value="">전체 카테고리</option>
-          {['발주', '요청', '견적요청', '문의', '공지', '미팅', '클레임', '기타'].map((cat) => (
-            <option key={cat} value={cat}>{cat}</option>
-          ))}
-        </select>
         <button onClick={loadEmails} className="px-4 py-2 rounded-xl border border-slate-200 text-sm hover:bg-slate-50 transition font-medium">
           검색
         </button>
@@ -469,6 +644,8 @@ export default function EmailsPage() {
           onReject={rejectEmail}
           onSend={sendEmail}
           onReclassify={reclassify}
+          onGenerateDraft={generateDraft}
+          onBack={() => { setView('list'); setSelectedEmail(null); }}
         />
       )}
     </div>
@@ -510,7 +687,7 @@ function EmailList({ emails, loading, onSelect }: {
       <div className="bg-white rounded-2xl border border-slate-200 p-14 text-center">
         <div className="text-4xl mb-3">📭</div>
         <h3 className="text-base font-bold text-slate-900 mb-1">이메일이 없습니다</h3>
-        <p className="text-sm text-slate-500">&quot;새 이메일 가져오기&quot;를 클릭하여 하이웍스에서 메일을 가져오세요</p>
+        <p className="text-sm text-slate-500">&quot;새 이메일 가져오기&quot;를 클릭하여 메일을 가져오세요</p>
       </div>
     );
   }
@@ -519,6 +696,10 @@ function EmailList({ emails, loading, onSelect }: {
     <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
       {emails.map((email) => {
         const statusInfo = STATUS_LABELS[email.status] || STATUS_LABELS['read'];
+        const summary = getDisplaySummary(email);
+        const ai = parseAiSummary(email.aiSummary || email.ai_summary);
+        const code = ai?.code || CATEGORY_CODES[email.category] || '';
+
         return (
           <button
             key={email.id}
@@ -539,16 +720,25 @@ function EmailList({ emails, loading, onSelect }: {
               </div>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-xs text-slate-500 truncate">{email.sender}</span>
-                {email.ai_summary && (
-                  <span className="text-xs text-slate-400 truncate hidden md:inline">— {email.ai_summary}</span>
+                {summary && (
+                  <span className="text-xs text-slate-400 truncate hidden md:inline">— {summary}</span>
                 )}
               </div>
             </div>
 
             {/* Category badge */}
-            <span className={`px-2.5 py-1 rounded-full text-xs font-bold shrink-0 ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS['기타']}`}>
-              {email.category}
+            <span className={`px-2.5 py-1 rounded-full text-xs font-bold shrink-0 ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS['필터링']}`}>
+              {code ? `${code}.` : ''}{email.category}
             </span>
+
+            {/* Importance */}
+            {ai?.importance && ai.importance !== '하' && (
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                ai.importance === '상' ? 'bg-red-50 text-red-600' : 'bg-yellow-50 text-yellow-600'
+              }`}>
+                {ai.importance === '상' ? '중요' : '보통'}
+              </span>
+            )}
 
             {/* Status badge */}
             <span className={`px-2.5 py-1 rounded-full text-xs font-bold shrink-0 ${statusInfo.color}`}>
@@ -557,7 +747,7 @@ function EmailList({ emails, loading, onSelect }: {
 
             {/* Date */}
             <span className="text-xs text-slate-400 shrink-0 w-28 text-right">
-              {formatDate(email.received_at || email.created_at)}
+              {formatDate(email.received_at || email.receivedAt || email.created_at || email.createdAt)}
             </span>
           </button>
         );
@@ -581,6 +771,8 @@ function EmailDetailView({
   onReject,
   onSend,
   onReclassify,
+  onGenerateDraft,
+  onBack,
 }: {
   email: EmailDetail;
   draftText: string;
@@ -596,31 +788,56 @@ function EmailDetailView({
   onReject: () => void;
   onSend: () => void;
   onReclassify: () => void;
+  onGenerateDraft: () => void;
+  onBack: () => void;
 }) {
   const statusInfo = STATUS_LABELS[email.status] || STATUS_LABELS['read'];
+  const ai = parseAiSummary(email.ai_summary);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 animate-fadeIn">
       {/* Left: Email Content */}
       <div className="lg:col-span-2 space-y-5">
+        {/* Back to list button */}
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition"
+        >
+          <span>&#8592;</span>
+          <span>목록으로 돌아가기</span>
+        </button>
+
         {/* Email Header */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6">
           <div className="flex items-start justify-between mb-3">
             <h2 className="text-lg font-bold text-slate-900 flex-1">{email.subject}</h2>
             <div className="flex gap-2 shrink-0 ml-3">
-              <span className={`px-3 py-1 rounded-full text-xs font-bold ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS['기타']}`}>
-                {email.category}
+              <span className={`px-3 py-1 rounded-full text-xs font-bold ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS['필터링']}`}>
+                {CATEGORY_CODES[email.category] ? `${CATEGORY_CODES[email.category]}.` : ''}{email.category}
               </span>
               <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusInfo.color}`}>
                 {statusInfo.label}
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-4 text-xs text-slate-500">
+          <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
             <span>보낸 사람: <strong className="text-slate-700">{email.sender}</strong></span>
+            {ai?.company_name && <span>회사: <strong className="text-slate-700">{ai.company_name}</strong></span>}
             {email.recipient && <span>받는 사람: {email.recipient}</span>}
             <span>{formatDate(email.received_at)}</span>
             <span>우선순위: {PRIORITY_ICONS[email.priority]} {email.priority}</span>
+            {ai?.importance && (
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                ai.importance === '상' ? 'bg-red-50 text-red-600' : ai.importance === '중' ? 'bg-yellow-50 text-yellow-600' : 'bg-gray-50 text-gray-500'
+              }`}>
+                중요도: {ai.importance}
+              </span>
+            )}
+            {ai?.needs_approval && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-600">
+                이사님 확인 필요
+              </span>
+            )}
           </div>
         </div>
 
@@ -632,10 +849,10 @@ function EmailDetailView({
           </div>
         </div>
 
-        {/* AI Analysis */}
+        {/* AI Analysis - Enhanced */}
         <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-2xl border border-purple-200/80 p-6">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-purple-800">AI 분석 결과</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-purple-800">KPROS AI 분석 결과</h3>
             <div className="flex items-center gap-3">
               <span className="text-xs text-purple-600 font-medium">신뢰도: {email.ai_confidence}%</span>
               <button
@@ -647,14 +864,69 @@ function EmailDetailView({
               </button>
             </div>
           </div>
-          {email.ai_summary && (
-            <p className="text-sm text-purple-700 mb-3">
-              <strong>요약:</strong> {email.ai_summary}
-            </p>
+
+          {ai ? (
+            <div className="space-y-3">
+              {/* Summary */}
+              <div className="bg-white/60 rounded-xl p-3">
+                <div className="text-xs font-bold text-purple-600 mb-1">📋 핵심 요약</div>
+                <p className="text-sm text-purple-800">{ai.summary}</p>
+              </div>
+
+              {/* Director Report */}
+              {ai.director_report && (
+                <div className="bg-white/60 rounded-xl p-3">
+                  <div className="text-xs font-bold text-purple-600 mb-1">📌 이사님 보고</div>
+                  <p className="text-sm text-purple-800 whitespace-pre-wrap">{ai.director_report}</p>
+                </div>
+              )}
+
+              {/* Action Items */}
+              {ai.action_items && (
+                <div className="bg-white/60 rounded-xl p-3">
+                  <div className="text-xs font-bold text-purple-600 mb-1">⚡ 액션 플랜</div>
+                  <p className="text-sm text-purple-800 whitespace-pre-wrap">{ai.action_items}</p>
+                </div>
+              )}
+
+              {/* Search Keywords (A카테고리) */}
+              {ai.search_keywords && ai.search_keywords.length > 0 && (
+                <div className="bg-white/60 rounded-xl p-3">
+                  <div className="text-xs font-bold text-purple-600 mb-1">🔍 드롭박스 검색 키워드</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ai.search_keywords.map((kw, i) => (
+                      <span key={i} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">{kw}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Estimated Revenue (B카테고리) */}
+              {ai.estimated_revenue && (
+                <div className="bg-white/60 rounded-xl p-3">
+                  <div className="text-xs font-bold text-purple-600 mb-1">💰 예상 매출</div>
+                  <p className="text-sm text-purple-800 font-semibold">{ai.estimated_revenue}</p>
+                </div>
+              )}
+
+              {/* Note */}
+              {ai.note && (
+                <div className="text-xs text-purple-500 mt-1">비고: {ai.note}</div>
+              )}
+            </div>
+          ) : (
+            /* fallback for legacy plain-text aiSummary */
+            email.ai_summary && (
+              <p className="text-sm text-purple-700">
+                <strong>요약:</strong> {email.ai_summary}
+              </p>
+            )
           )}
+
+          {/* AI Draft Response */}
           {email.ai_draft_response && (
-            <div>
-              <div className="text-xs font-bold text-purple-600 mb-1.5">AI 자동 답신 초안:</div>
+            <div className="mt-4">
+              <div className="text-xs font-bold text-purple-600 mb-1.5">✉️ AI 자동 답신 초안:</div>
               <div className="text-sm text-purple-800 bg-white/60 rounded-xl p-4 whitespace-pre-wrap">
                 {email.ai_draft_response}
               </div>
@@ -662,10 +934,26 @@ function EmailDetailView({
           )}
         </div>
 
+        {/* Dropbox Search - A카테고리(자료대응) */}
+        {ai && ai.search_keywords && ai.search_keywords.length > 0 && (
+          <DropboxSearchPanel keywords={ai.search_keywords} />
+        )}
+
         {/* Draft Editor */}
         {['read', 'draft', 'rejected'].includes(email.status) && (
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
-            <h3 className="text-sm font-bold text-slate-700 mb-4">답신 작성</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-slate-700">답신 작성</h3>
+              {!email.ai_draft_response && (
+                <button
+                  onClick={onGenerateDraft}
+                  disabled={actionLoading === 'generate'}
+                  className="px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-xs font-bold hover:bg-purple-200 disabled:opacity-50 transition"
+                >
+                  {actionLoading === 'generate' ? 'AI 생성중...' : '🤖 AI 답신 생성'}
+                </button>
+              )}
+            </div>
             <div className="space-y-4">
               <div>
                 <label className="text-xs text-slate-500 mb-1.5 block font-medium">답신 제목</label>
@@ -813,6 +1101,8 @@ function EmailDetailView({
             {email.sent_at && <InfoRow label="발송일" value={formatDate(email.sent_at)} />}
             <InfoRow label="우선순위" value={`${PRIORITY_ICONS[email.priority]} ${email.priority}`} />
             <InfoRow label="AI 신뢰도" value={`${email.ai_confidence}%`} />
+            {ai?.sender_info && <InfoRow label="발신자 정보" value={ai.sender_info} />}
+            {ai?.company_name && <InfoRow label="회사명" value={ai.company_name} />}
           </div>
         </div>
       </div>
@@ -866,6 +1156,140 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between">
       <span className="text-slate-500">{label}</span>
       <span className="text-slate-700 font-medium">{value || '-'}</span>
+    </div>
+  );
+}
+
+// ==========================================
+// Dropbox Search Panel
+// ==========================================
+
+interface DropboxFile {
+  name: string;
+  path: string;
+  size: number;
+  modified: string;
+  is_folder: boolean;
+}
+
+function DropboxSearchPanel({ keywords }: { keywords: string[] }) {
+  const [results, setResults] = useState<DropboxFile[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [error, setError] = useState('');
+  const [downloadingPath, setDownloadingPath] = useState('');
+
+  const searchDropbox = async () => {
+    setSearching(true);
+    setError('');
+    try {
+      const res = await fetch(apiUrl('/api/v1/dropbox/search-multi'), {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ keywords }),
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setResults(data.data || []);
+        setSearched(true);
+      } else if (data.need_reauth) {
+        setError('Dropbox 인증이 필요합니다. 관리자에게 문의하세요.');
+      } else {
+        setError(data.detail || '검색 실패');
+      }
+    } catch (err: any) {
+      setError(err.message || '드롭박스 검색 실패');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const getDownloadLink = async (path: string) => {
+    setDownloadingPath(path);
+    try {
+      const res = await fetch(apiUrl('/api/v1/dropbox/link'), {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ path }),
+      });
+      const data = await res.json();
+      if (data.status === 'success' && data.link) {
+        window.open(data.link, '_blank');
+      } else {
+        alert(data.detail || '링크 생성 실패');
+      }
+    } catch {
+      alert('다운로드 링크 생성 실패');
+    } finally {
+      setDownloadingPath('');
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  };
+
+  return (
+    <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-2xl border border-blue-200/80 p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-bold text-blue-800">📂 드롭박스 파일 검색</h3>
+        <button
+          onClick={searchDropbox}
+          disabled={searching}
+          className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50 transition"
+        >
+          {searching ? '검색중...' : '🔍 AI 키워드로 검색'}
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {keywords.map((kw, i) => (
+          <span key={i} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+            {kw}
+          </span>
+        ))}
+      </div>
+
+      {error && (
+        <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg mb-3">{error}</div>
+      )}
+
+      {searched && results.length === 0 && (
+        <div className="text-xs text-blue-500 bg-white/60 px-3 py-2 rounded-lg">
+          검색 결과가 없습니다. 드롭박스에 해당 파일이 없거나 다른 키워드로 검색해 보세요.
+        </div>
+      )}
+
+      {results.length > 0 && (
+        <div className="space-y-1.5">
+          {results.map((file, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 bg-white/70 rounded-lg px-3 py-2 text-xs hover:bg-white transition"
+            >
+              <span className="text-base shrink-0">{file.is_folder ? '📁' : '📄'}</span>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-slate-800 truncate">{file.name}</div>
+                <div className="text-slate-400 truncate">{file.path}</div>
+              </div>
+              {!file.is_folder && (
+                <>
+                  <span className="text-slate-400 shrink-0">{formatFileSize(file.size)}</span>
+                  <button
+                    onClick={() => getDownloadLink(file.path)}
+                    disabled={downloadingPath === file.path}
+                    className="px-2 py-1 rounded bg-blue-100 text-blue-700 font-bold hover:bg-blue-200 disabled:opacity-50 transition shrink-0"
+                  >
+                    {downloadingPath === file.path ? '...' : '다운로드'}
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

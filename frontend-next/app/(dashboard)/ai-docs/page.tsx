@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 type Tab = 'write' | 'analyze' | 'rewrite';
@@ -52,6 +52,55 @@ export default function AiDocsPage() {
   const [rewriteLoading, setRewriteLoading] = useState(false);
 
   const [error, setError] = useState('');
+
+  // File upload
+  const [writeFile, setWriteFile] = useState<File | null>(null);
+  const [analyzeFile, setAnalyzeFile] = useState<File | null>(null);
+  const writeFileRef = useRef<HTMLInputElement>(null);
+  const analyzeFileRef = useRef<HTMLInputElement>(null);
+
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('파일 읽기 실패'));
+      reader.readAsText(file, 'UTF-8');
+    });
+  };
+
+  const handleWriteFileSelect = async (file: File | undefined) => {
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const textExtensions = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'rtf', 'tsv'];
+    if (!textExtensions.includes(ext)) {
+      setError(`지원하지 않는 파일 형식입니다 (${ext}). 텍스트 기반 파일만 가능합니다: ${textExtensions.join(', ')}`);
+      return;
+    }
+    if (file.size > 1024 * 1024) { setError('파일 크기는 1MB 이하만 가능합니다.'); return; }
+    try {
+      const text = await readFileAsText(file);
+      setWriteFile(file);
+      setWriteContext((prev) => prev ? prev + '\n\n--- 첨부파일: ' + file.name + ' ---\n' + text : text);
+      setError('');
+    } catch { setError('파일을 읽을 수 없습니다.'); }
+  };
+
+  const handleAnalyzeFileSelect = async (file: File | undefined) => {
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const textExtensions = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'rtf', 'tsv'];
+    if (!textExtensions.includes(ext)) {
+      setError(`지원하지 않는 파일 형식입니다 (${ext}). 텍스트 기반 파일만 가능합니다: ${textExtensions.join(', ')}`);
+      return;
+    }
+    if (file.size > 1024 * 1024) { setError('파일 크기는 1MB 이하만 가능합니다.'); return; }
+    try {
+      const text = await readFileAsText(file);
+      setAnalyzeFile(file);
+      setAnalyzeContent((prev) => prev ? prev + '\n\n--- 첨부파일: ' + file.name + ' ---\n' + text : text);
+      setError('');
+    } catch { setError('파일을 읽을 수 없습니다.'); }
+  };
 
   const loadTemplates = async () => {
     try {
@@ -324,6 +373,38 @@ export default function AiDocsPage() {
                   />
                   <div className="text-xs text-slate-400 mt-1">{writeContext.length}자 입력됨</div>
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">참고 서류 첨부 (선택)</label>
+                  <input
+                    ref={writeFileRef}
+                    type="file"
+                    accept=".txt,.md,.csv,.json,.xml,.html,.htm,.log,.rtf,.tsv"
+                    className="hidden"
+                    onChange={(e) => handleWriteFileSelect(e.target.files?.[0])}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => writeFileRef.current?.click()}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-slate-300 text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50/50 transition w-full justify-center"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    {writeFile ? writeFile.name : '파일 첨부 (txt, md, csv, json, xml, html)'}
+                  </button>
+                  {writeFile && (
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-xs text-brand-600">{writeFile.name} ({(writeFile.size / 1024).toFixed(1)} KB)</span>
+                      <button
+                        type="button"
+                        onClick={() => { setWriteFile(null); if (writeFileRef.current) writeFileRef.current.value = ''; }}
+                        className="text-xs text-red-400 hover:text-red-600"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button
                   type="submit"
                   disabled={writeLoading || !writeContext.trim()}
@@ -411,6 +492,38 @@ export default function AiDocsPage() {
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none resize-none"
                   />
                   <div className="text-xs text-slate-400 mt-1">{analyzeContent.length}자 입력됨</div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">또는 파일 첨부</label>
+                  <input
+                    ref={analyzeFileRef}
+                    type="file"
+                    accept=".txt,.md,.csv,.json,.xml,.html,.htm,.log,.rtf,.tsv"
+                    className="hidden"
+                    onChange={(e) => handleAnalyzeFileSelect(e.target.files?.[0])}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => analyzeFileRef.current?.click()}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-slate-300 text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50/50 transition w-full justify-center"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    {analyzeFile ? analyzeFile.name : '파일 첨부 (txt, md, csv, json, xml, html)'}
+                  </button>
+                  {analyzeFile && (
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-xs text-brand-600">{analyzeFile.name} ({(analyzeFile.size / 1024).toFixed(1)} KB)</span>
+                      <button
+                        type="button"
+                        onClick={() => { setAnalyzeFile(null); if (analyzeFileRef.current) analyzeFileRef.current.value = ''; }}
+                        className="text-xs text-red-400 hover:text-red-600"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <button
                   type="submit"

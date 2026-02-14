@@ -16,6 +16,14 @@ export interface Env {
   GOOGLE_API_KEY: string;
   JWT_SECRET: string;
 
+  // Gmail OAuth2 (하이웍스→Gmail POP3 포워딩 후 Gmail API로 메일 조회)
+  GMAIL_CLIENT_ID?: string;
+  GMAIL_CLIENT_SECRET?: string;
+
+  // Dropbox OAuth2 (KPROS 자료대응 파일 검색)
+  DROPBOX_APP_KEY?: string;
+  DROPBOX_APP_SECRET?: string;
+
   // Vars
   ENVIRONMENT: string;
   JWT_EXPIRE_MINUTES: string;

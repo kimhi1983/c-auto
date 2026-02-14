@@ -1,5 +1,6 @@
 /**
  * AI Service - Claude (Anthropic) + Gemini (Google) 연동
+ * KPROS 이메일 자동화 시스템 v2
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -91,20 +92,85 @@ export const SYSTEM_PROMPTS = {
 6. 발신자 정보`,
 } as const;
 
-// ─── 이메일 8분류 프롬프트 ───
+// ─── KPROS 이메일 5분류 시스템 ───
+
+export const KPROS_EMAIL_SYSTEM_PROMPT = `당신은 KPROS(화장품 원료 전문기업)의 AI 스마트 비서입니다.
+이사님을 보좌하며 수신 메일을 분석하고 최적의 업무 처리를 수행합니다.
+
+[기본 규칙]
+1. 모든 외부 메일 답변은 "정중하고 프로페셔널한 비즈니스 한국어"로 작성합니다.
+2. 답변 서두에 "안녕하세요, KPROS입니다."를 포함합니다.
+3. 이사님께 보고할 때는 핵심만 간결하게 전달합니다.
+4. 판단이 어려운 건은 needs_approval을 true로 설정합니다.
+
+[메일 분류 카테고리 (5종)]
+A: 자료대응 - 카탈로그, MSDS, CoA, 인증서, 사양서 등 파일 요청
+B: 영업기회 - 견적, 발주, 단가 문의, 구매 의사
+C: 스케줄링 - 미팅 요청, 일정 조율, 방문 제안
+D: 정보수집 - 원료 단가 변동, 시장 동향, 뉴스레터, 공지
+E: 필터링 - 스팸, 광고, 업무 무관 메일
+
+[카테고리 판별 키워드]
+A: "카탈로그","MSDS","인증서","CoA","사양서","자료 요청","파일 부탁","보내주세요","전달 부탁","첨부","규격서"
+B: "견적","단가","가격","발주","주문","구매","MOQ","납기","수량","리드타임","quote","PO"
+C: "미팅","회의","방문","일정","시간","면담","화상회의","줌","Zoom","Teams","스케줄"
+D: "단가 인상","가격 변동","시장 동향","뉴스레터","공지","안내","통보","시황","트렌드"
+E: 위 A~D에 해당하지 않으며 대량발송 형식이거나 업무와 무관한 내용
+
+[복합 판별] 복수 카테고리 요소 시 비즈니스 가치 우선: B > C > A > D > E. note에 복합 분류 표시.
+
+[카테고리별 처리 규칙]
+■ A: 요청 자료/제품명 추출, 드롭박스 검색 키워드(한글/영문) 생성, 답변 필수문구 "요청하신 자료를 첨부하여 드립니다."
+■ B: 품목/수량/납기 테이블 추출, 중요도 평가(상:500만+/중:일반/하:소량), 답변톤 적극적 영업, AI가 단가 직접 기재 금지, 필수문구 "문의해 주셔서 감사합니다. 검토 후 상세 견적서를 보내드리겠습니다."
+■ C: 미팅 목적/일시/방식/장소 추출, 수락 버전 답변 작성
+■ D: 원료명/변동유형/변동폭/적용시점 추출, 원가 영향 1줄 분석, 외부 답변 불필요
+■ E: 응대 없음, 1줄 기록만
+
+반드시 JSON만 출력하세요.`;
 
 export function classifyEmailPrompt(sender: string, subject: string, body: string): string {
-  return `다음 이메일을 분석해서 정확히 JSON 형식으로만 답해줘. 다른 설명 없이 JSON만 출력해.
+  return `다음 수신 이메일을 분석하여 정확히 JSON 형식으로만 답하세요. 다른 설명 없이 JSON만 출력.
 
+[수신 메일]
 발신자: ${sender}
 제목: ${subject}
-내용: ${(body || '').slice(0, 1000)}
+내용:
+${(body || '').slice(0, 2000)}
 
-형식:
+[출력 JSON]
 {
-  "category": "발주/요청/견적요청/문의/공지/미팅/클레임/기타 중 하나",
-  "priority": "high/medium/low 중 하나",
-  "summary": "이메일 내용을 한 문장으로 요약 (한국어)",
-  "confidence": 0~100 사이 정수
+  "code": "A/B/C/D/E 중 하나",
+  "category": "자료대응/영업기회/스케줄링/정보수집/필터링 중 하나",
+  "priority": "high/medium/low",
+  "importance": "상/중/하",
+  "summary": "핵심 요약 1~2문장",
+  "action_items": "AI 수행 액션 요약 2~3줄",
+  "draft_reply": "발송 가능 답변 초안. D/E카테고리는 빈 문자열",
+  "draft_subject": "RE: 원본제목. 답변 불필요 시 빈 문자열",
+  "search_keywords": ["드롭박스 검색 키워드 (A카테고리). 불필요 시 빈 배열"],
+  "director_report": "이사님 보고용 3줄 이내 요약",
+  "needs_approval": true,
+  "company_name": "발신 회사명",
+  "sender_info": "발신자 이름 (직책)",
+  "estimated_revenue": "예상 매출 (B카테고리만, 불가 시 빈 문자열)",
+  "note": "비고",
+  "confidence": 85
 }`;
+}
+
+/**
+ * KPROS 이메일 고급 분류 - 시스템 프롬프트 포함
+ */
+export async function classifyEmailAdvanced(
+  apiKey: string,
+  sender: string,
+  subject: string,
+  body: string
+): Promise<string> {
+  return askClaudeLong(
+    apiKey,
+    classifyEmailPrompt(sender, subject, body),
+    KPROS_EMAIL_SYSTEM_PROMPT,
+    2048
+  );
 }
