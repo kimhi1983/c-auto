@@ -14,6 +14,8 @@ import {
   searchDropboxMultiKeyword,
   listDropboxFolder,
   getDropboxTempLink,
+  ensureDropboxFolderStructure,
+  uploadDropboxFile,
 } from "../services/dropbox";
 import type { Env } from "../types";
 
@@ -103,6 +105,8 @@ dropboxRouter.use("/search", authMiddleware);
 dropboxRouter.use("/search-multi", authMiddleware);
 dropboxRouter.use("/list", authMiddleware);
 dropboxRouter.use("/link", authMiddleware);
+dropboxRouter.use("/init-folders", authMiddleware);
+dropboxRouter.use("/upload", authMiddleware);
 
 /**
  * POST /dropbox/search - 파일 검색
@@ -214,6 +218,76 @@ dropboxRouter.post("/link", async (c) => {
     return c.json({ status: "success", link });
   } catch (err: any) {
     return c.json({ status: "error", detail: `링크 생성 실패: ${err.message}` }, 500);
+  }
+});
+
+/**
+ * POST /dropbox/init-folders - AI업무폴더 + 카테고리별 하위 폴더 초기화
+ */
+dropboxRouter.post("/init-folders", async (c) => {
+  const accessToken = await getDropboxAccessToken(
+    c.env.CACHE!,
+    c.env.DROPBOX_APP_KEY!,
+    c.env.DROPBOX_APP_SECRET!
+  );
+
+  if (!accessToken) {
+    return c.json({ status: "error", detail: "Dropbox 인증이 필요합니다.", need_reauth: true }, 401);
+  }
+
+  try {
+    await ensureDropboxFolderStructure(accessToken);
+    return c.json({ status: "success", message: "AI업무폴더 구조가 생성되었습니다." });
+  } catch (err: any) {
+    return c.json({ status: "error", detail: `폴더 생성 실패: ${err.message}` }, 500);
+  }
+});
+
+/**
+ * POST /dropbox/upload - 파일 업로드 (지시서 저장)
+ * body: { category: string, fileName: string, content: string }
+ */
+dropboxRouter.post("/upload", async (c) => {
+  const body = await c.req.json<{ category: string; fileName: string; content: string }>();
+
+  if (!body.fileName || !body.content) {
+    return c.json({ status: "error", detail: "파일명과 내용이 필요합니다." }, 400);
+  }
+
+  const accessToken = await getDropboxAccessToken(
+    c.env.CACHE!,
+    c.env.DROPBOX_APP_KEY!,
+    c.env.DROPBOX_APP_SECRET!
+  );
+
+  if (!accessToken) {
+    return c.json({ status: "error", detail: "Dropbox 인증이 필요합니다.", need_reauth: true }, 401);
+  }
+
+  // 카테고리 → 폴더 매핑
+  const CATEGORY_FOLDERS: Record<string, string> = {
+    '자료대응': 'A.자료대응',
+    '영업기회': 'B.영업기회',
+    '스케줄링': 'C.스케줄링',
+    '정보수집': 'D.정보수집',
+    '필터링': 'E.필터링',
+  };
+
+  const folderName = CATEGORY_FOLDERS[body.category] || 'E.필터링';
+  const filePath = `/AI업무폴더/${folderName}/${body.fileName}`;
+
+  try {
+    // 폴더가 없으면 생성
+    await ensureDropboxFolderStructure(accessToken);
+    // 파일 업로드
+    const result = await uploadDropboxFile(accessToken, filePath, body.content);
+    return c.json({
+      status: "success",
+      data: result,
+      message: `${filePath}에 저장되었습니다.`,
+    });
+  } catch (err: any) {
+    return c.json({ status: "error", detail: `업로드 실패: ${err.message}` }, 500);
   }
 });
 

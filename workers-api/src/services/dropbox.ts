@@ -252,6 +252,97 @@ export async function getDropboxTempLink(
   return data.link || "";
 }
 
+// ─── Create Folder ───
+
+const DROPBOX_CONTENT_URL = "https://content.dropboxapi.com/2";
+
+export async function createDropboxFolder(
+  accessToken: string,
+  path: string
+): Promise<{ path: string; created: boolean }> {
+  const res = await fetch(`${DROPBOX_API_URL}/files/create_folder_v2`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path, autorename: false }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    // 이미 존재하는 폴더면 무시
+    if (err.includes("conflict") || err.includes("path/conflict")) {
+      return { path, created: false };
+    }
+    throw new Error(`Dropbox create_folder failed: ${err}`);
+  }
+
+  return { path, created: true };
+}
+
+// ─── Ensure Folder Structure ───
+
+export async function ensureDropboxFolderStructure(
+  accessToken: string,
+  basePath: string = "/AI업무폴더"
+): Promise<void> {
+  const folders = [
+    basePath,
+    `${basePath}/A.자료대응`,
+    `${basePath}/B.영업기회`,
+    `${basePath}/C.스케줄링`,
+    `${basePath}/D.정보수집`,
+    `${basePath}/E.필터링`,
+  ];
+
+  for (const folder of folders) {
+    try {
+      await createDropboxFolder(accessToken, folder);
+    } catch {
+      // 폴더가 이미 존재하면 무시
+    }
+  }
+}
+
+// ─── Upload File ───
+
+export async function uploadDropboxFile(
+  accessToken: string,
+  path: string,
+  content: string
+): Promise<{ name: string; path: string; size: number }> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(content);
+
+  const res = await fetch(`${DROPBOX_CONTENT_URL}/files/upload`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/octet-stream",
+      "Dropbox-API-Arg": JSON.stringify({
+        path,
+        mode: "add",
+        autorename: true,
+        mute: false,
+      }),
+    },
+    body: data,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Dropbox upload failed: ${err}`);
+  }
+
+  const result = await res.json() as any;
+  return {
+    name: result.name || "",
+    path: result.path_display || path,
+    size: result.size || data.byteLength,
+  };
+}
+
 // ─── Multi-keyword Search (KPROS) ───
 
 export async function searchDropboxMultiKeyword(

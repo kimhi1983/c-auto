@@ -251,7 +251,8 @@ const INSTRUCTION_TYPES: Record<string, { label: string; icon: string }> = {
   '필터링':   { label: '처리완료 보고서', icon: '📝' },
 };
 
-function exportInstructionSheet(email: EmailDetail) {
+/** 지시서 CSV 데이터 생성 (공통 로직) */
+function buildInstructionCSV(email: EmailDetail): { csvContent: string; fileName: string; category: string } {
   const BOM = '\uFEFF';
   const ai = parseAiSummary(email.ai_summary);
   const now = new Date();
@@ -259,8 +260,8 @@ function exportInstructionSheet(email: EmailDetail) {
   const category = email.category || '필터링';
   const code = ai?.code || CATEGORY_CODES[category] || 'E';
   const receivedDate = formatDateFull(email.received_at);
+  const companyName = (ai?.company_name || '').replace(/[\\/:*?"<>|]/g, '').trim() || '미상';
 
-  // 이메일 본문에서 품목 추출 (줄바꿈 기준)
   const bodyLines = (email.body || '').split('\n').map(l => l.trim()).filter(Boolean);
 
   let headers: string[] = [];
@@ -410,7 +411,14 @@ function exportInstructionSheet(email: EmailDetail) {
     .join('\n');
 
   const typeInfo = INSTRUCTION_TYPES[category] || INSTRUCTION_TYPES['필터링'];
-  const fileName = `KPROS_${typeInfo.label.replace(/\//g, '_')}_${dateStr}_${email.id}.csv`;
+  const fileName = `KPROS-${code}-${typeInfo.label.replace(/\//g, '_')}_${dateStr}_${companyName}_#${email.id}.csv`;
+
+  return { csvContent, fileName, category };
+}
+
+/** 지시서 로컬 다운로드 */
+function exportInstructionSheet(email: EmailDetail) {
+  const { csvContent, fileName } = buildInstructionCSV(email);
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -419,6 +427,33 @@ function exportInstructionSheet(email: EmailDetail) {
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/** 지시서 Dropbox 저장 */
+async function saveInstructionToDropbox(email: EmailDetail): Promise<{ success: boolean; message: string; path?: string }> {
+  const { csvContent, fileName, category } = buildInstructionCSV(email);
+
+  try {
+    const res = await fetch(apiUrl('/api/v1/dropbox/upload'), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        category,
+        fileName,
+        content: csvContent,
+      }),
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      return { success: true, message: data.message, path: data.data?.path };
+    }
+    if (data.need_reauth) {
+      return { success: false, message: 'Dropbox 인증이 필요합니다. 설정에서 Dropbox를 연동하세요.' };
+    }
+    return { success: false, message: data.detail || '저장 실패' };
+  } catch (err: any) {
+    return { success: false, message: err.message || 'Dropbox 저장 실패' };
+  }
 }
 
 // ==========================================
@@ -1071,6 +1106,7 @@ function EmailDetailView({
           >
             {(INSTRUCTION_TYPES[email.category] || INSTRUCTION_TYPES['필터링']).icon} 지시서 내보내기
           </button>
+          <DropboxSaveButton email={email} />
         </div>
       </div>
 
@@ -1399,12 +1435,15 @@ function InstructionPreview({ email, ai }: { email: EmailDetail; ai: AiSummaryDa
     <div className="bg-white rounded-xl border border-green-200 overflow-hidden">
       <div className="bg-green-700 text-white px-4 py-2 text-xs font-bold flex justify-between items-center">
         <span>{typeInfo.icon} {typeInfo.label}</span>
-        <button
-          onClick={() => exportInstructionSheet(email)}
-          className="px-3 py-1 rounded bg-green-500 text-white text-[11px] font-bold hover:bg-green-400 transition"
-        >
-          엑셀 내보내기
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => exportInstructionSheet(email)}
+            className="px-3 py-1 rounded bg-green-500 text-white text-[11px] font-bold hover:bg-green-400 transition"
+          >
+            엑셀 내보내기
+          </button>
+          <DropboxSaveButton email={email} />
+        </div>
       </div>
       <table className="w-full border-collapse">
         <tbody>
@@ -1412,6 +1451,48 @@ function InstructionPreview({ email, ai }: { email: EmailDetail; ai: AiSummaryDa
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ==========================================
+// Dropbox Save Button
+// ==========================================
+
+function DropboxSaveButton({ email }: { email: EmailDetail }) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [savedPath, setSavedPath] = useState('');
+
+  const handleSave = async () => {
+    setSaving(true);
+    const result = await saveInstructionToDropbox(email);
+    setSaving(false);
+
+    if (result.success) {
+      setSaved(true);
+      setSavedPath(result.path || '');
+      setTimeout(() => setSaved(false), 5000);
+    } else {
+      alert(result.message);
+    }
+  };
+
+  if (saved) {
+    return (
+      <span className="px-3 py-1 rounded-lg bg-emerald-100 text-emerald-700 text-xs font-bold" title={savedPath}>
+        Dropbox 저장완료
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleSave}
+      disabled={saving}
+      className="px-3 py-1 rounded-lg bg-sky-600 text-white text-xs font-bold hover:bg-sky-700 disabled:opacity-50 transition"
+    >
+      {saving ? '저장중...' : '☁️ Dropbox 저장'}
+    </button>
   );
 }
 
