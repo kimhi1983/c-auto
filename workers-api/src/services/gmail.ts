@@ -45,8 +45,9 @@ interface GmailMessageHeader {
 
 interface GmailMessagePart {
   mimeType: string;
+  filename?: string;
   headers?: GmailMessageHeader[];
-  body?: { size: number; data?: string };
+  body?: { size: number; data?: string; attachmentId?: string };
   parts?: GmailMessagePart[];
 }
 
@@ -70,6 +71,13 @@ export interface GmailListResponse {
   resultSizeEstimate: number;
 }
 
+export interface ParsedAttachment {
+  fileName: string;
+  contentType: string;
+  fileSize: number;
+  attachmentId?: string;
+}
+
 export interface ParsedEmail {
   messageId: string;
   subject: string;
@@ -79,6 +87,7 @@ export interface ParsedEmail {
   body: string;
   bodyHtml: string;
   snippet: string;
+  attachments: ParsedAttachment[];
 }
 
 // ─── OAuth2 인증 ───
@@ -184,17 +193,19 @@ export async function getGmailAccessToken(
 // ─── Gmail API 호출 ───
 
 /**
- * 받은편지함 메일 목록 조회
+ * 받은편지함 메일 목록 조회 (단일 페이지)
  */
 export async function listGmailMessages(
   accessToken: string,
   maxResults = 10,
-  query = "in:inbox"
+  query = "in:inbox",
+  pageToken?: string
 ): Promise<GmailListResponse> {
   const params = new URLSearchParams({
     maxResults: maxResults.toString(),
     q: query,
   });
+  if (pageToken) params.set("pageToken", pageToken);
 
   const res = await fetch(`${GMAIL_API_BASE}/messages?${params}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -206,6 +217,31 @@ export async function listGmailMessages(
   }
 
   return res.json();
+}
+
+/**
+ * 페이지네이션으로 여러 페이지 메일 ID 수집 (최대 totalMax개)
+ * Gmail API는 페이지당 최대 500개, 기본 100개
+ */
+export async function listGmailMessagesAll(
+  accessToken: string,
+  totalMax: number,
+  query = "in:inbox"
+): Promise<Array<{ id: string; threadId: string }>> {
+  const allMessages: Array<{ id: string; threadId: string }> = [];
+  let pageToken: string | undefined;
+  const perPage = Math.min(totalMax, 100); // Gmail API 권장 페이지 크기
+
+  while (allMessages.length < totalMax) {
+    const res = await listGmailMessages(accessToken, perPage, query, pageToken);
+    if (res.messages) {
+      allMessages.push(...res.messages);
+    }
+    if (!res.nextPageToken || allMessages.length >= totalMax) break;
+    pageToken = res.nextPageToken;
+  }
+
+  return allMessages.slice(0, totalMax);
 }
 
 /**
@@ -237,7 +273,14 @@ function getHeader(headers: GmailMessageHeader[], name: string): string {
 function decodeBase64Url(data: string): string {
   const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
   try {
-    return atob(base64);
+    const binaryStr = atob(base64);
+    // atob()은 Latin-1 바이트 문자열을 반환하므로, UTF-8 한글이 깨짐
+    // Uint8Array로 변환 후 TextDecoder로 UTF-8 디코딩
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    return new TextDecoder("utf-8").decode(bytes);
   } catch {
     return "";
   }
@@ -283,9 +326,36 @@ function extractBody(payload: GmailMessage["payload"]): { text: string; html: st
   return { text, html };
 }
 
+/**
+ * MIME parts에서 첨부파일 메타데이터 추출
+ */
+function extractAttachments(parts?: GmailMessagePart[]): ParsedAttachment[] {
+  const attachments: ParsedAttachment[] = [];
+  if (!parts) return attachments;
+
+  for (const part of parts) {
+    // filename이 있는 파트는 첨부파일
+    if (part.filename && part.filename.length > 0) {
+      attachments.push({
+        fileName: part.filename,
+        contentType: part.mimeType || "application/octet-stream",
+        fileSize: part.body?.size || 0,
+        attachmentId: part.body?.attachmentId,
+      });
+    }
+    // 중첩된 multipart 파트도 탐색
+    if (part.parts) {
+      attachments.push(...extractAttachments(part.parts));
+    }
+  }
+
+  return attachments;
+}
+
 export function parseGmailMessage(msg: GmailMessage): ParsedEmail {
   const headers = msg.payload.headers;
   const { text, html } = extractBody(msg.payload);
+  const attachments = extractAttachments(msg.payload.parts);
 
   return {
     messageId: msg.id,
@@ -296,6 +366,7 @@ export function parseGmailMessage(msg: GmailMessage): ParsedEmail {
     body: text,
     bodyHtml: html,
     snippet: msg.snippet,
+    attachments,
   };
 }
 

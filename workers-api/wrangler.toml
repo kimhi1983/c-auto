@@ -36,5 +36,7 @@ ENVIRONMENT = "production"
 
 # Secrets (배포 시 wrangler secret put 명령어로 설정):
 # wrangler secret put JWT_SECRET  (프로덕션용 강력한 키로 교체)
+# wrangler secret put GEMINI_API_KEY       (Gemini Flash - 분류/요약/스팸필터 90%)
+# wrangler secret put ANTHROPIC_API_KEY    (Claude Haiku 4.5 + Sonnet 4.5 - 분석/답변)
 # wrangler secret put GMAIL_CLIENT_ID
 # wrangler secret put GMAIL_CLIENT_SECRET

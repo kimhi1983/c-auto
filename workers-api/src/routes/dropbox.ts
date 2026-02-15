@@ -245,12 +245,18 @@ dropboxRouter.post("/init-folders", async (c) => {
 
 /**
  * POST /dropbox/upload - 파일 업로드 (지시서 저장)
- * body: { category: string, fileName: string, content: string }
+ * body: { category: string, fileName: string, content?: string, contentBase64?: string }
+ * contentBase64: Excel 등 바이너리 파일의 base64 인코딩 데이터
  */
 dropboxRouter.post("/upload", async (c) => {
-  const body = await c.req.json<{ category: string; fileName: string; content: string }>();
+  const body = await c.req.json<{
+    category: string;
+    fileName: string;
+    content?: string;
+    contentBase64?: string;
+  }>();
 
-  if (!body.fileName || !body.content) {
+  if (!body.fileName || (!body.content && !body.contentBase64)) {
     return c.json({ status: "error", detail: "파일명과 내용이 필요합니다." }, 400);
   }
 
@@ -279,8 +285,21 @@ dropboxRouter.post("/upload", async (c) => {
   try {
     // 폴더가 없으면 생성
     await ensureDropboxFolderStructure(accessToken);
-    // 파일 업로드
-    const result = await uploadDropboxFile(accessToken, filePath, body.content);
+
+    // base64 바이너리 또는 텍스트 업로드
+    let uploadData: string | Uint8Array;
+    if (body.contentBase64) {
+      const binaryStr = atob(body.contentBase64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      uploadData = bytes;
+    } else {
+      uploadData = body.content!;
+    }
+
+    const result = await uploadDropboxFile(accessToken, filePath, uploadData);
     return c.json({
       status: "success",
       data: result,

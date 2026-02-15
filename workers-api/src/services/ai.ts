@@ -1,27 +1,116 @@
 /**
- * AI Service - Cloudflare Workers AI 기반
- * KPROS 이메일 자동화 시스템 v2
+ * AI Service - Multi-Model Architecture
+ * KPROS 이메일 자동화 시스템 v3
  *
- * Anthropic/Gemini API는 Workers에서 IP 차단 이슈로
- * Cloudflare Workers AI (@cf/meta/llama-3.1-70b-instruct) 사용
+ * 역할별 AI 엔진 분배:
+ * ┌─────────────────────┬──────────────────────┬──────┐
+ * │ 역할                │ 엔진                 │ 비율 │
+ * ├─────────────────────┼──────────────────────┼──────┤
+ * │ 분류+요약+스팸필터  │ Gemini Flash         │ 90%  │
+ * │ 첨부파일 숫자/표    │ Claude Haiku 4.5     │  8%  │
+ * │ 거래처 답변 초안    │ Claude Sonnet 4.5    │  2%  │
+ * │ (폴백)              │ Workers AI (Llama)   │  -   │
+ * └─────────────────────┴──────────────────────┴──────┘
  */
 
+import type { Env } from "../types";
+
+// ─── Model IDs ───
+
+const GEMINI_MODEL = "gemini-2.0-flash";
+const CLAUDE_HAIKU = "claude-haiku-4-5-20251001";
+const CLAUDE_SONNET = "claude-sonnet-4-5-20250929";
 const WORKERS_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct";
 
-/**
- * Workers AI 호출
- */
+// ─── Provider: Gemini Flash ───
+
+async function callGemini(
+  apiKey: string,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 2048,
+  temperature = 0.3
+): Promise<string> {
+  const body: Record<string, unknown> = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      temperature,
+    },
+  };
+
+  if (systemPrompt) {
+    body.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as any;
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// ─── Provider: Claude (Anthropic) ───
+
+async function callClaude(
+  apiKey: string,
+  model: string,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 2048,
+  temperature = 0.3
+): Promise<string> {
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: maxTokens,
+    temperature,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  if (systemPrompt) {
+    body.system = systemPrompt;
+  }
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Claude API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as any;
+  return data.content?.[0]?.text || "";
+}
+
+// ─── Provider: Workers AI (Fallback) ───
+
 async function callWorkersAI(
   ai: Ai,
   prompt: string,
   systemPrompt?: string,
   maxTokens = 2048
 ): Promise<string> {
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
-
-  if (systemPrompt) {
-    messages.push({ role: "system", content: systemPrompt });
-  }
+  const messages: Array<{ role: "system" | "user"; content: string }> = [];
+  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
   messages.push({ role: "user", content: prompt });
 
   const response = await ai.run(WORKERS_AI_MODEL as any, {
@@ -33,32 +122,66 @@ async function callWorkersAI(
   return (response as any).response || "";
 }
 
+// ─── Smart Router (역할별 최적 모델 자동 배분) ───
+
 /**
- * AI 호출 (짧은 응답)
+ * Fast 모델 (Gemini Flash) - 분류, 요약, 키워드 추출
+ * 폴백: Workers AI
  */
-export async function askAI(
-  ai: Ai,
+async function callFast(
+  env: Env,
   prompt: string,
-  maxTokens = 1024
+  systemPrompt?: string,
+  maxTokens = 2048
 ): Promise<string> {
-  return callWorkersAI(ai, prompt, undefined, maxTokens);
+  if (env.GEMINI_API_KEY) {
+    try {
+      return await callGemini(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens);
+    } catch (e) {
+      console.error("[AI] Gemini failed, falling back to Workers AI:", e);
+    }
+  }
+  return callWorkersAI(env.AI, prompt, systemPrompt, maxTokens);
 }
 
 /**
- * AI 호출 (장문 응답 - 문서 작성용)
+ * Analyze 모델 (Claude Haiku 4.5) - 문서 분석, 숫자/표 처리
+ * 폴백: Gemini → Workers AI
  */
-export async function askAILong(
-  ai: Ai,
+async function callAnalyze(
+  env: Env,
   prompt: string,
   systemPrompt?: string,
   maxTokens = 4096
 ): Promise<string> {
-  return callWorkersAI(
-    ai,
-    prompt,
-    systemPrompt || "당신은 한국 비즈니스 문서 작성 전문가입니다.",
-    maxTokens
-  );
+  if (env.ANTHROPIC_API_KEY) {
+    try {
+      return await callClaude(env.ANTHROPIC_API_KEY, CLAUDE_HAIKU, prompt, systemPrompt, maxTokens);
+    } catch (e) {
+      console.error("[AI] Claude Haiku failed, falling back:", e);
+    }
+  }
+  return callFast(env, prompt, systemPrompt, maxTokens);
+}
+
+/**
+ * Premium 모델 (Claude Sonnet 4.5) - 고품질 문서 작성, 답변 초안
+ * 폴백: Claude Haiku → Gemini → Workers AI
+ */
+async function callPremium(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 4096
+): Promise<string> {
+  if (env.ANTHROPIC_API_KEY) {
+    try {
+      return await callClaude(env.ANTHROPIC_API_KEY, CLAUDE_SONNET, prompt, systemPrompt, maxTokens);
+    } catch (e) {
+      console.error("[AI] Claude Sonnet failed, falling back:", e);
+    }
+  }
+  return callAnalyze(env, prompt, systemPrompt, maxTokens);
 }
 
 // ─── AI 문서 작성 시스템 프롬프트 ───
@@ -135,48 +258,170 @@ E: 위 A~D에 해당하지 않으며 대량발송 형식이거나 업무와 무�
 반드시 JSON만 출력하세요. 다른 설명이나 마크다운 없이 순수 JSON 객체만 출력하세요.`;
 
 export function classifyEmailPrompt(sender: string, subject: string, body: string): string {
-  return `다음 수신 이메일을 분석하여 정확히 JSON 형식으로만 답하세요. 다른 설명 없이 JSON만 출력.
+  const hasBody = !!(body && body.trim().length > 10);
+  const bodyWarning = hasBody ? '' : '\n주의: 본문이 비어있거나 매우 짧습니다. 제목과 발신자 정보만으로 분석하세요. 본문이 없다는 사실을 summary와 director_report에 반영하세요.';
 
+  return `다음 수신 이메일을 분석하여 정확히 JSON 형식으로만 답하세요. 다른 설명 없이 JSON만 출력.
+${bodyWarning}
 [수신 메일]
 발신자: ${sender}
 제목: ${subject}
 내용:
-${(body || '').slice(0, 2000)}
+${(body || '(본문 없음)').slice(0, 2000)}
 
-[출력 JSON]
+[출력 JSON - 각 필드 설명을 정확히 따르세요]
 {
   "code": "A/B/C/D/E 중 하나",
   "category": "자료대응/영업기회/스케줄링/정보수집/필터링 중 하나",
   "priority": "high/medium/low",
   "importance": "상/중/하",
-  "summary": "핵심 요약 1~2문장",
-  "action_items": "AI 수행 액션 요약 2~3줄",
+  "summary": "팩트 중심 핵심 요약. '누가, 무엇을, 왜' 형식의 1~2문장. 예: 'ABC사 박지민 과장이 히알루론산 카탈로그 및 MSDS 3종을 요청함'",
+  "action_items": "구체적 처리 단계를 번호 매겨 작성. 예: '1. 드롭박스에서 히알루론산 MSDS 검색\\n2. 검색 결과 확인 후 첨부 회신\\n3. 업무일지 기록'. 최소 2~4단계. 막연한 표현('확인', '검토') 지양.",
   "draft_reply": "발송 가능 답변 초안. D/E카테고리는 빈 문자열",
   "draft_subject": "RE: 원본제목. 답변 불필요 시 빈 문자열",
   "search_keywords": ["드롭박스 검색 키워드 (A카테고리). 불필요 시 빈 배열"],
-  "director_report": "이사님 보고용 3줄 이내 요약",
+  "director_report": "이사님 보고용 요약. summary와 반드시 다른 내용! 비즈니스 임팩트와 권장 조치를 포함한 보고 형식. 예: 'ABC사에서 HA 자료 3종 요청. 기존 거래처로 파일 첨부 회신 준비 완료. 이사님 별도 확인 불필요.' 3줄 이내.",
   "needs_approval": true,
   "company_name": "발신 회사명",
   "sender_info": "발신자 이름 (직책)",
   "estimated_revenue": "예상 매출 (B카테고리만, 불가 시 빈 문자열)",
-  "note": "비고",
+  "note": "비고 (복합 분류, 특이사항 등)",
   "confidence": 85
-}`;
 }
 
+[중요 규칙]
+- summary는 사실(팩트) 요약, director_report는 비즈니스 관점 보고입니다. 두 필드가 동일하면 안 됩니다.
+- action_items는 "~확인" 같은 1줄이 아니라 번호 매긴 구체적 처리 단계여야 합니다.
+- 본문이 없으면 confidence를 60 이하로 낮추고, note에 "본문 미추출"을 기록하세요.`;
+}
+
+// ═══════════════════════════════════════════
+// Exported Functions (역할별 최적 모델 자동 배분)
+// ═══════════════════════════════════════════
+
 /**
- * KPROS 이메일 고급 분류 - Workers AI
+ * 이메일 분류 + 요약 + 스팸필터 → Gemini Flash (90%)
  */
 export async function classifyEmailAdvanced(
-  ai: Ai,
+  env: Env,
   sender: string,
   subject: string,
   body: string
 ): Promise<string> {
-  return askAILong(
-    ai,
+  return callFast(
+    env,
     classifyEmailPrompt(sender, subject, body),
     KPROS_EMAIL_SYSTEM_PROMPT,
     2048
   );
+}
+
+/**
+ * 빠른 AI 응답 - 키워드 추출 등 → Gemini Flash
+ */
+export async function askAI(
+  env: Env,
+  prompt: string,
+  maxTokens = 1024
+): Promise<string> {
+  return callFast(env, prompt, undefined, maxTokens);
+}
+
+/**
+ * 문서 작성 → Claude Sonnet 4.5 (고품질)
+ */
+export async function askAIWrite(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 4096
+): Promise<string> {
+  return callPremium(
+    env,
+    prompt,
+    systemPrompt || "당신은 한국 비즈니스 문서 작성 전문가입니다.",
+    maxTokens
+  );
+}
+
+/**
+ * 문서 분석 → Claude Haiku 4.5 (비용 효율)
+ */
+export async function askAIAnalyze(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 4096
+): Promise<string> {
+  return callAnalyze(
+    env,
+    prompt,
+    systemPrompt || "당신은 비즈니스 문서 분석 전문가입니다.",
+    maxTokens
+  );
+}
+
+/**
+ * 거래처 답변 초안 → Claude Sonnet 4.5 (2%)
+ */
+export async function askAIDraft(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 2048
+): Promise<string> {
+  return callPremium(env, prompt, systemPrompt, maxTokens);
+}
+
+/**
+ * 범용 장문 AI (하위 호환) → Claude Sonnet 4.5
+ */
+export async function askAILong(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 4096
+): Promise<string> {
+  return callPremium(
+    env,
+    prompt,
+    systemPrompt || "당신은 한국 비즈니스 문서 작성 전문가입니다.",
+    maxTokens
+  );
+}
+
+/**
+ * AI 엔진 상태 정보 (프론트엔드 표시용)
+ */
+export function getAIEngineStatus(env: Env): {
+  gemini: boolean;
+  claude: boolean;
+  workersAI: boolean;
+  models: Array<{ role: string; engine: string; status: string }>;
+} {
+  const gemini = !!env.GEMINI_API_KEY;
+  const claude = !!env.ANTHROPIC_API_KEY;
+
+  return {
+    gemini,
+    claude,
+    workersAI: true,
+    models: [
+      {
+        role: "분류+요약+스팸필터",
+        engine: gemini ? "Gemini Flash" : "Workers AI (Llama)",
+        status: gemini ? "active" : "fallback",
+      },
+      {
+        role: "첨부파일 숫자/표 분석",
+        engine: claude ? "Claude Haiku 4.5" : gemini ? "Gemini Flash" : "Workers AI (Llama)",
+        status: claude ? "active" : "fallback",
+      },
+      {
+        role: "거래처 답변 초안",
+        engine: claude ? "Claude Sonnet 4.5" : gemini ? "Gemini Flash" : "Workers AI (Llama)",
+        status: claude ? "active" : "fallback",
+      },
+    ],
+  };
 }

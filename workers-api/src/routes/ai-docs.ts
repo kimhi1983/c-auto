@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, desc } from "drizzle-orm";
 import { archivedDocuments, emails } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
-import { askAILong, SYSTEM_PROMPTS } from "../services/ai";
+import { askAIWrite, askAIAnalyze, SYSTEM_PROMPTS } from "../services/ai";
 import type { Env } from "../types";
 
 const aiDocs = new Hono<{ Bindings: Env }>();
@@ -104,8 +104,8 @@ ${inputContent}
 - 한국 비즈니스 문서 관례 준수
 - 공식적이고 전문적인 어조`;
 
-  const result = await askAILong(
-    c.env.AI,
+  const result = await askAIWrite(
+    c.env,
     prompt,
     SYSTEM_PROMPTS.documentWriter
   );
@@ -162,8 +162,8 @@ ${email.body?.slice(0, 3000)}
 
 위 이메일 내용을 바탕으로 ${template?.name || "업무지시서"}를 작성해주세요.`;
 
-  const result = await askAILong(
-    c.env.AI,
+  const result = await askAIWrite(
+    c.env,
     prompt,
     SYSTEM_PROMPTS.documentWriter
   );
@@ -227,8 +227,8 @@ aiDocs.post("/analyze", async (c) => {
 분석 대상:
 ${content}`;
 
-  const result = await askAILong(
-    c.env.AI,
+  const result = await askAIAnalyze(
+    c.env,
     prompt,
     SYSTEM_PROMPTS.documentAnalyzer
   );
@@ -267,7 +267,7 @@ ${body.instructions}
 
 수정된 전체 문서를 출력하세요.`;
 
-  const result = await askAILong(c.env.AI, prompt);
+  const result = await askAIWrite(c.env, prompt);
 
   return c.json({
     status: "success",

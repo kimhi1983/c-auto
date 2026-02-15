@@ -1,11 +1,18 @@
 /**
  * Inventory Management Routes - /api/v1/inventory
+ * 재고 관리 + 엑셀 업로드 + AI 분석 보고서 + 이카운트 ERP 연동
  */
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, desc, like, count } from "drizzle-orm";
-import { inventoryItems, inventoryTransactions } from "../db/schema";
+import { inventoryItems, inventoryTransactions, dailyReports } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
+import { askAIAnalyze } from "../services/ai";
+import {
+  getERPStatus,
+  getInventory as getEcountInventory,
+  getSales as getEcountSales,
+} from "../services/ecount";
 import type { Env } from "../types";
 
 const inventory = new Hono<{ Bindings: Env }>();
@@ -295,6 +302,971 @@ inventory.get("/items/:id/transactions", async (c) => {
     .limit(50);
 
   return c.json({ status: "success", data: transactions });
+});
+
+/**
+ * POST /inventory/upload - 엑셀 데이터 업로드 (클라이언트에서 파싱 후 JSON 전송)
+ * 기존 품목은 업데이트, 새 품목은 추가
+ */
+inventory.post("/upload", async (c) => {
+  const body = await c.req.json<{
+    items: Array<{
+      item_code?: string;
+      item_name: string;
+      unit?: string;
+      current_stock: number;
+      min_stock?: number;
+      max_stock?: number;
+      unit_price?: number;
+      supplier?: string;
+      category?: string;
+      location?: string;
+    }>;
+    file_name?: string;
+  }>();
+
+  if (!body.items || body.items.length === 0) {
+    return c.json({ status: "error", message: "업로드할 데이터가 없습니다" }, 400);
+  }
+
+  const db = drizzle(c.env.DB);
+  let created = 0;
+  let updated = 0;
+
+  for (const row of body.items) {
+    if (!row.item_name) continue;
+
+    // 기존 품목 조회 (이름으로)
+    const [existing] = await db
+      .select()
+      .from(inventoryItems)
+      .where(eq(inventoryItems.itemName, row.item_name))
+      .limit(1);
+
+    if (existing) {
+      await db
+        .update(inventoryItems)
+        .set({
+          currentStock: row.current_stock ?? existing.currentStock,
+          minStock: row.min_stock ?? existing.minStock,
+          maxStock: row.max_stock ?? existing.maxStock,
+          unitPrice: row.unit_price ?? existing.unitPrice,
+          unit: row.unit || existing.unit,
+          supplier: row.supplier || existing.supplier,
+          category: row.category || existing.category,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(inventoryItems.id, existing.id));
+      updated++;
+    } else {
+      await db.insert(inventoryItems).values({
+        itemCode: row.item_code,
+        itemName: row.item_name,
+        unit: row.unit || "개",
+        currentStock: row.current_stock || 0,
+        minStock: row.min_stock || 0,
+        maxStock: row.max_stock || 0,
+        unitPrice: row.unit_price || 0,
+        supplier: row.supplier,
+        category: row.category,
+        location: row.location,
+      });
+      created++;
+    }
+  }
+
+  return c.json({
+    status: "success",
+    data: { total: body.items.length, created, updated },
+    message: `${body.items.length}건 처리 (신규 ${created}, 업데이트 ${updated})`,
+  });
+});
+
+/**
+ * POST /inventory/analyze - AI 재고 분석 보고서 생성
+ * 엑셀 데이터를 받아서 안전재고, 부족재고, 과잉재고, 추천사항 분석
+ */
+inventory.post("/analyze", async (c) => {
+  const body = await c.req.json<{
+    items: Array<{
+      item_name: string;
+      current_stock: number;
+      min_stock?: number;
+      max_stock?: number;
+      unit?: string;
+      unit_price?: number;
+      supplier?: string;
+      category?: string;
+    }>;
+    file_name?: string;
+  }>();
+
+  if (!body.items || body.items.length === 0) {
+    return c.json({ status: "error", message: "분석할 데이터가 없습니다" }, 400);
+  }
+
+  const items = body.items;
+
+  // 기본 통계 계산
+  const totalItems = items.length;
+  const totalValue = items.reduce((s, i) => s + (i.current_stock || 0) * (i.unit_price || 0), 0);
+  const lowStock = items.filter((i) => i.min_stock && i.current_stock <= i.min_stock);
+  const overStock = items.filter((i) => i.max_stock && i.max_stock > 0 && i.current_stock > i.max_stock);
+  const zeroStock = items.filter((i) => i.current_stock === 0);
+  const safeItems = items.filter(
+    (i) => !i.min_stock || i.current_stock > i.min_stock
+  );
+
+  // 카테고리별 집계
+  const byCategory: Record<string, { count: number; value: number }> = {};
+  for (const item of items) {
+    const cat = item.category || "미분류";
+    if (!byCategory[cat]) byCategory[cat] = { count: 0, value: 0 };
+    byCategory[cat].count++;
+    byCategory[cat].value += (item.current_stock || 0) * (item.unit_price || 0);
+  }
+
+  // 공급사별 집계
+  const bySupplier: Record<string, number> = {};
+  for (const item of items) {
+    const sup = item.supplier || "미지정";
+    bySupplier[sup] = (bySupplier[sup] || 0) + 1;
+  }
+
+  // AI 분석 프롬프트
+  const dataForAI = `
+[KPROS 재고 현황 분석 데이터]
+
+■ 전체 요약
+- 총 품목 수: ${totalItems}개
+- 총 재고 가치: ₩${totalValue.toLocaleString()}
+- 안전재고 부족: ${lowStock.length}건
+- 과잉재고: ${overStock.length}건
+- 재고 0 품목: ${zeroStock.length}건
+
+■ 안전재고 부족 품목 (긴급)
+${lowStock.length > 0 ? lowStock.slice(0, 15).map((i) =>
+  `- ${i.item_name}: 현재 ${i.current_stock}${i.unit || "개"} / 최소 ${i.min_stock}${i.unit || "개"} (부족: ${(i.min_stock || 0) - i.current_stock}${i.unit || "개"})${i.supplier ? ` [공급: ${i.supplier}]` : ""}`
+).join("\n") : "없음"}
+
+■ 과잉재고 품목
+${overStock.length > 0 ? overStock.slice(0, 10).map((i) =>
+  `- ${i.item_name}: 현재 ${i.current_stock}${i.unit || "개"} / 최대 ${i.max_stock}${i.unit || "개"} (초과: ${i.current_stock - (i.max_stock || 0)}${i.unit || "개"})${i.unit_price ? ` [단가: ₩${i.unit_price.toLocaleString()}]` : ""}`
+).join("\n") : "없음"}
+
+■ 재고 없는 품목
+${zeroStock.length > 0 ? zeroStock.slice(0, 10).map((i) =>
+  `- ${i.item_name}${i.supplier ? ` [공급: ${i.supplier}]` : ""}`
+).join("\n") : "없음"}
+
+■ 카테고리별 현황
+${Object.entries(byCategory).map(([cat, d]) =>
+  `- ${cat}: ${d.count}개 품목, 재고가치 ₩${d.value.toLocaleString()}`
+).join("\n")}
+
+■ 공급사별 품목 수
+${Object.entries(bySupplier).map(([sup, cnt]) =>
+  `- ${sup}: ${cnt}개 품목`
+).join("\n")}
+
+■ 전체 품목 목록 (상위 30개)
+${items.slice(0, 30).map((i) =>
+  `${i.item_name} | 재고: ${i.current_stock}${i.unit || "개"} | 최소: ${i.min_stock || "-"} | 최대: ${i.max_stock || "-"} | 단가: ${i.unit_price ? "₩" + i.unit_price.toLocaleString() : "-"}`
+).join("\n")}
+${items.length > 30 ? `\n... 외 ${items.length - 30}건` : ""}
+`;
+
+  let aiInsight = "";
+  try {
+    aiInsight = await askAIAnalyze(
+      c.env,
+      `다음 KPROS(화장품 원료 전문기업) 재고 데이터를 분석하여 이사님께 보고할 재고 관리 보고서를 작성하세요.
+
+${dataForAI}
+
+[작성 규칙]
+1. **긴급 조치 필요** - 안전재고 미달 품목 중 즉시 발주가 필요한 항목 (우선순위 순)
+2. **안전재고 확보 방안** - 부족 품목별 권장 발주량과 예상 비용
+3. **과잉재고 관리** - 과잉 품목의 재고 최적화 방안
+4. **재고 효율성 분석** - 재고 회전율, 사장 재고 위험, 보관 비용 관점
+5. **공급사 관리** - 공급사 의존도, 대체 공급처 필요 여부
+6. **추천 액션 플랜** - 향후 1주/1개월 실행 과제
+7. 숫자는 ₩ 단위, 천 단위 콤마 포함
+8. 이사님이 빠르게 의사결정할 수 있도록 간결하게`,
+      "당신은 KPROS(화장품 원료 전문기업) 재고관리 전문 AI 비서입니다. 안전재고 관리, SCM 최적화, 원가절감에 전문성을 갖고 이사님께 보고하는 톤으로 분석합니다.",
+      4096
+    );
+  } catch (e) {
+    console.error("[Inventory] AI analysis failed:", e);
+    aiInsight = "AI 분석을 생성할 수 없습니다.";
+  }
+
+  return c.json({
+    status: "success",
+    data: {
+      summary: {
+        total_items: totalItems,
+        total_value: totalValue,
+        low_stock_count: lowStock.length,
+        over_stock_count: overStock.length,
+        zero_stock_count: zeroStock.length,
+        safe_stock_count: safeItems.length,
+      },
+      low_stock_items: lowStock.map((i) => ({
+        name: i.item_name,
+        current: i.current_stock,
+        min: i.min_stock,
+        shortage: (i.min_stock || 0) - i.current_stock,
+        unit: i.unit || "개",
+        supplier: i.supplier,
+      })),
+      over_stock_items: overStock.map((i) => ({
+        name: i.item_name,
+        current: i.current_stock,
+        max: i.max_stock,
+        excess: i.current_stock - (i.max_stock || 0),
+        unit: i.unit || "개",
+      })),
+      zero_stock_items: zeroStock.map((i) => ({
+        name: i.item_name,
+        supplier: i.supplier,
+      })),
+      by_category: byCategory,
+      by_supplier: bySupplier,
+      ai_insight: aiInsight,
+      analyzed_at: new Date().toISOString(),
+      file_name: body.file_name,
+    },
+    message: "재고 분석 완료",
+  });
+});
+
+/**
+ * POST /inventory/sync-ecount - 이카운트 ERP 재고/판매 동기화
+ * 이카운트에서 재고현황 + 판매내역을 가져와서 DB 동기화
+ */
+inventory.post("/sync-ecount", async (c) => {
+  const erpStatus = getERPStatus(c.env);
+  if (!erpStatus.configured) {
+    return c.json({
+      status: "error",
+      message: "이카운트 ERP 인증 정보가 설정되지 않았습니다. wrangler secret put으로 ECOUNT_COM_CODE, ECOUNT_USER_ID, ECOUNT_API_CERT_KEY를 등록하세요.",
+      erp_configured: false,
+    }, 400);
+  }
+
+  const user = c.get("user");
+  const db = drizzle(c.env.DB);
+  const now = new Date().toISOString();
+
+  // 판매 기간 설정 (기본 90일)
+  const body = await c.req.json<{
+    sales_days?: number; // 판매 데이터 조회 기간 (기본 90일)
+  }>().catch(() => ({}));
+
+  const salesDays = Math.min(body.sales_days || 90, 365);
+  const today = new Date();
+  const dateTo = today.toISOString().split("T")[0].replace(/-/g, "");
+  const dateFrom = (() => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - salesDays);
+    return d.toISOString().split("T")[0].replace(/-/g, "");
+  })();
+
+  try {
+    // ── 이카운트 API 동시 호출: 재고현황 + 판매내역 ──
+    const [inventoryResult, salesResult] = await Promise.allSettled([
+      getEcountInventory(c.env),
+      getEcountSales(c.env, dateFrom, dateTo),
+    ]);
+
+    // 재고 데이터 처리
+    let inventoryItems_synced = 0;
+    let inventoryItems_created = 0;
+    let inventoryItems_updated = 0;
+    const syncedInventory: Array<{
+      item_name: string;
+      item_code: string;
+      current_stock: number;
+      unit: string;
+      unit_price: number;
+      action: "created" | "updated";
+    }> = [];
+
+    if (inventoryResult.status === "fulfilled") {
+      const ecountItems = inventoryResult.value.items || [];
+
+      for (const item of ecountItems) {
+        const prodCode = item.PROD_CD || item.PROD_CODE || "";
+        const prodName = item.PROD_DES || item.PROD_NAME || item.PROD_CD || "";
+        const qty = parseFloat(item.STCK_QTY || item.BAL_QTY || item.QTY || "0") || 0;
+        const unit = item.UNIT || item.UNIT_DES || "EA";
+        const price = parseFloat(item.PRICE || item.UNIT_PRICE || "0") || 0;
+        const whCode = item.WH_CD || item.WH_DES || "";
+
+        if (!prodName) continue;
+
+        // DB에서 기존 품목 조회 (품목코드 또는 이름으로)
+        let [existing] = prodCode
+          ? await db.select().from(inventoryItems).where(eq(inventoryItems.itemCode, prodCode)).limit(1)
+          : [];
+        if (!existing) {
+          [existing] = await db.select().from(inventoryItems).where(eq(inventoryItems.itemName, prodName)).limit(1);
+        }
+
+        if (existing) {
+          const oldStock = existing.currentStock;
+          await db.update(inventoryItems).set({
+            currentStock: qty,
+            itemCode: prodCode || existing.itemCode,
+            unit: unit || existing.unit,
+            unitPrice: price || existing.unitPrice,
+            location: whCode || existing.location,
+            updatedAt: now,
+          }).where(eq(inventoryItems.id, existing.id));
+
+          // 재고 변동 시 트랜잭션 기록
+          if (oldStock !== qty) {
+            const diff = qty - oldStock;
+            await db.insert(inventoryTransactions).values({
+              itemId: existing.id,
+              transactionType: diff > 0 ? "입고" : "출고",
+              quantity: Math.abs(diff),
+              note: `이카운트 동기화 (${dateTo})`,
+              referenceNumber: `ECOUNT-SYNC-${dateTo}`,
+              createdBy: user.userId,
+            });
+          }
+
+          inventoryItems_updated++;
+          syncedInventory.push({ item_name: prodName, item_code: prodCode, current_stock: qty, unit, unit_price: price, action: "updated" });
+        } else {
+          const [newItem] = await db.insert(inventoryItems).values({
+            itemCode: prodCode || null,
+            itemName: prodName,
+            unit: unit || "EA",
+            currentStock: qty,
+            unitPrice: price,
+            location: whCode || null,
+          }).returning();
+
+          if (newItem && qty > 0) {
+            await db.insert(inventoryTransactions).values({
+              itemId: newItem.id,
+              transactionType: "입고",
+              quantity: qty,
+              note: `이카운트 초기 동기화`,
+              referenceNumber: `ECOUNT-INIT-${dateTo}`,
+              createdBy: user.userId,
+            });
+          }
+
+          inventoryItems_created++;
+          syncedInventory.push({ item_name: prodName, item_code: prodCode, current_stock: qty, unit, unit_price: price, action: "created" });
+        }
+
+        inventoryItems_synced++;
+      }
+    }
+
+    // 판매 데이터 처리
+    let salesCount = 0;
+    const salesRecords: Array<{
+      date: string;
+      item_name: string;
+      item_code: string;
+      quantity: number;
+      amount: number;
+      customer: string;
+    }> = [];
+
+    if (salesResult.status === "fulfilled") {
+      const ecountSales = salesResult.value.items || [];
+
+      for (const sale of ecountSales) {
+        const date = sale.IO_DATE || "";
+        const prodName = sale.PROD_DES || sale.PROD_CD || "";
+        const prodCode = sale.PROD_CD || "";
+        const qty = parseFloat(sale.QTY || "0") || 0;
+        const amt = parseFloat(sale.SUPPLY_AMT || sale.TOTAL_AMT || "0") || 0;
+        const customer = sale.CUST_DES || sale.CUST_CD || "";
+
+        if (!prodName || !date) continue;
+
+        salesRecords.push({
+          date,
+          item_name: prodName,
+          item_code: prodCode,
+          quantity: qty,
+          amount: amt,
+          customer,
+        });
+        salesCount++;
+      }
+    }
+
+    const invError = inventoryResult.status === "rejected" ? (inventoryResult.reason as Error).message : null;
+    const salesError = salesResult.status === "rejected" ? (salesResult.reason as Error).message : null;
+
+    return c.json({
+      status: "success",
+      data: {
+        inventory: {
+          synced: inventoryItems_synced,
+          created: inventoryItems_created,
+          updated: inventoryItems_updated,
+          items: syncedInventory,
+          error: invError,
+        },
+        sales: {
+          count: salesCount,
+          period: { from: dateFrom, to: dateTo, days: salesDays },
+          records: salesRecords,
+          error: salesError,
+        },
+        synced_at: now,
+      },
+      message: `이카운트 동기화 완료: 재고 ${inventoryItems_synced}건 (신규 ${inventoryItems_created}, 업데이트 ${inventoryItems_updated}), 판매 ${salesCount}건 (${salesDays}일)`,
+    });
+  } catch (e: any) {
+    console.error("[Inventory] eCount sync error:", e);
+    return c.json({
+      status: "error",
+      message: e.message || "이카운트 동기화 실패",
+      erp_configured: true,
+    }, 500);
+  }
+});
+
+/**
+ * GET /inventory/ecount-status - 이카운트 ERP 연동 상태 확인
+ */
+inventory.get("/ecount-status", async (c) => {
+  const status = getERPStatus(c.env);
+  return c.json({
+    status: "success",
+    data: {
+      configured: status.configured,
+      credentials: {
+        com_code: status.comCode,
+        user_id: status.userId,
+        api_key: status.apiKey,
+      },
+    },
+  });
+});
+
+/**
+ * POST /inventory/smart-analyze - 재고 + 판매 통합 스마트 분석
+ * ABC분석, 안전재고 산출, 발주점(ROP), 판매속도, 재고일수, 품절위험, 사장재고
+ */
+inventory.post("/smart-analyze", async (c) => {
+  const body = await c.req.json<{
+    inventory_items: Array<{
+      item_name: string;
+      item_code?: string;
+      current_stock: number;
+      min_stock?: number;
+      max_stock?: number;
+      unit?: string;
+      unit_price?: number;
+      supplier?: string;
+      category?: string;
+    }>;
+    sales_records: Array<{
+      date: string;       // YYYY-MM-DD or YYYYMMDD
+      item_name: string;
+      quantity: number;
+      amount?: number;
+      customer?: string;
+    }>;
+    lead_time_days?: number;    // 기본 리드타임 (기본 7일)
+    service_level?: number;     // 서비스 레벨 (기본 95% → z=1.65)
+  }>();
+
+  if (!body.inventory_items?.length) {
+    return c.json({ status: "error", message: "재고 데이터가 필요합니다" }, 400);
+  }
+
+  const invItems = body.inventory_items;
+  const salesRecs = body.sales_records || [];
+  const leadTime = body.lead_time_days || 7;
+  // z-score: 90%=1.28, 95%=1.65, 99%=2.33
+  const zScore = body.service_level === 99 ? 2.33 : body.service_level === 90 ? 1.28 : 1.65;
+
+  // ──── 판매 데이터 정규화 ────
+  const normalizeDate = (d: string) => d.replace(/[^0-9]/g, '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+
+  // 품목별 판매 집계
+  const salesByItem: Record<string, { dates: Record<string, number>; totalQty: number; totalAmt: number; customers: Set<string> }> = {};
+
+  for (const rec of salesRecs) {
+    const key = rec.item_name.trim();
+    if (!salesByItem[key]) {
+      salesByItem[key] = { dates: {}, totalQty: 0, totalAmt: 0, customers: new Set() };
+    }
+    const dateStr = normalizeDate(rec.date);
+    salesByItem[key].dates[dateStr] = (salesByItem[key].dates[dateStr] || 0) + rec.quantity;
+    salesByItem[key].totalQty += rec.quantity;
+    salesByItem[key].totalAmt += rec.amount || 0;
+    if (rec.customer) salesByItem[key].customers.add(rec.customer);
+  }
+
+  // 판매 기간 계산 (일수)
+  const allDates = salesRecs.map((r) => normalizeDate(r.date)).filter(Boolean).sort();
+  const salesPeriodDays = allDates.length > 1
+    ? Math.max(1, Math.ceil((new Date(allDates[allDates.length - 1]).getTime() - new Date(allDates[0]).getTime()) / 86400000) + 1)
+    : allDates.length === 1 ? 1 : 0;
+
+  // ──── 품목별 분석 ────
+  interface ItemAnalysis {
+    name: string;
+    code?: string;
+    category?: string;
+    supplier?: string;
+    unit: string;
+    current_stock: number;
+    unit_price: number;
+    stock_value: number;
+    // 판매 분석
+    total_sold: number;
+    total_revenue: number;
+    avg_daily_sales: number;
+    max_daily_sales: number;
+    std_daily_sales: number;
+    customer_count: number;
+    // 재고 분석
+    safety_stock: number;
+    reorder_point: number;
+    days_of_supply: number;
+    recommended_order_qty: number;
+    // 분류
+    abc_class: 'A' | 'B' | 'C';
+    status: 'stockout_risk' | 'low_stock' | 'optimal' | 'overstock' | 'dead_stock';
+    demand_trend: 'increasing' | 'decreasing' | 'stable' | 'no_data';
+  }
+
+  const analyses: ItemAnalysis[] = [];
+
+  for (const inv of invItems) {
+    const sales = salesByItem[inv.item_name.trim()];
+    const unitPrice = inv.unit_price || 0;
+
+    let totalSold = 0;
+    let totalRevenue = 0;
+    let avgDaily = 0;
+    let maxDaily = 0;
+    let stdDaily = 0;
+    let customerCount = 0;
+    let demandTrend: ItemAnalysis['demand_trend'] = 'no_data';
+
+    if (sales && salesPeriodDays > 0) {
+      totalSold = sales.totalQty;
+      totalRevenue = sales.totalAmt || totalSold * unitPrice;
+      avgDaily = totalSold / salesPeriodDays;
+      customerCount = sales.customers.size;
+
+      // 일별 판매량 배열
+      const dailySales = Object.values(sales.dates);
+      maxDaily = Math.max(...dailySales, 0);
+
+      // 표준편차
+      if (dailySales.length > 1) {
+        const mean = dailySales.reduce((s, v) => s + v, 0) / dailySales.length;
+        const variance = dailySales.reduce((s, v) => s + (v - mean) ** 2, 0) / dailySales.length;
+        stdDaily = Math.sqrt(variance);
+      }
+
+      // 트렌드 분석 (전반기 vs 후반기)
+      const sortedDates = Object.keys(sales.dates).sort();
+      if (sortedDates.length >= 4) {
+        const mid = Math.floor(sortedDates.length / 2);
+        const firstHalf = sortedDates.slice(0, mid).reduce((s, d) => s + (sales.dates[d] || 0), 0) / mid;
+        const secondHalf = sortedDates.slice(mid).reduce((s, d) => s + (sales.dates[d] || 0), 0) / (sortedDates.length - mid);
+        const changeRate = firstHalf > 0 ? (secondHalf - firstHalf) / firstHalf : 0;
+        demandTrend = changeRate > 0.15 ? 'increasing' : changeRate < -0.15 ? 'decreasing' : 'stable';
+      } else if (sortedDates.length > 0) {
+        demandTrend = 'stable';
+      }
+    }
+
+    // 안전재고 = Z × σ × √L  (σ: 일별 판매 표준편차, L: 리드타임)
+    const safetyStock = salesPeriodDays > 0
+      ? Math.ceil(zScore * stdDaily * Math.sqrt(leadTime))
+      : inv.min_stock || 0;
+
+    // 발주점(ROP) = 평균일판매 × 리드타임 + 안전재고
+    const reorderPoint = Math.ceil(avgDaily * leadTime + safetyStock);
+
+    // 재고일수 = 현재고 / 일평균판매
+    const daysOfSupply = avgDaily > 0 ? Math.round(inv.current_stock / avgDaily) : inv.current_stock > 0 ? 999 : 0;
+
+    // 권장 발주량 = (일평균판매 × (리드타임+30)) + 안전재고 - 현재고
+    const recommendedOrder = Math.max(0, Math.ceil(avgDaily * (leadTime + 30) + safetyStock - inv.current_stock));
+
+    // 상태 판정
+    let status: ItemAnalysis['status'] = 'optimal';
+    if (totalSold === 0 && salesPeriodDays > 0 && inv.current_stock > 0) {
+      status = 'dead_stock';
+    } else if (inv.current_stock === 0) {
+      status = 'stockout_risk';
+    } else if (daysOfSupply <= leadTime && avgDaily > 0) {
+      status = 'stockout_risk';
+    } else if (inv.current_stock <= reorderPoint && avgDaily > 0) {
+      status = 'low_stock';
+    } else if (inv.max_stock && inv.current_stock > inv.max_stock) {
+      status = 'overstock';
+    }
+
+    analyses.push({
+      name: inv.item_name,
+      code: inv.item_code,
+      category: inv.category,
+      supplier: inv.supplier,
+      unit: inv.unit || '개',
+      current_stock: inv.current_stock,
+      unit_price: unitPrice,
+      stock_value: inv.current_stock * unitPrice,
+      total_sold: totalSold,
+      total_revenue: totalRevenue,
+      avg_daily_sales: Math.round(avgDaily * 100) / 100,
+      max_daily_sales: maxDaily,
+      std_daily_sales: Math.round(stdDaily * 100) / 100,
+      customer_count: customerCount,
+      safety_stock: safetyStock,
+      reorder_point: reorderPoint,
+      days_of_supply: daysOfSupply,
+      recommended_order_qty: recommendedOrder,
+      abc_class: 'C', // 임시, 아래에서 재계산
+      status,
+      demand_trend: demandTrend,
+    });
+  }
+
+  // ──── ABC 분류 (매출 기여도 기반) ────
+  const totalRevAll = analyses.reduce((s, a) => s + a.total_revenue, 0);
+  if (totalRevAll > 0) {
+    const sorted = [...analyses].sort((a, b) => b.total_revenue - a.total_revenue);
+    let cumRev = 0;
+    for (const item of sorted) {
+      cumRev += item.total_revenue;
+      const cumPct = cumRev / totalRevAll;
+      const original = analyses.find((a) => a.name === item.name);
+      if (original) {
+        original.abc_class = cumPct <= 0.8 ? 'A' : cumPct <= 0.95 ? 'B' : 'C';
+      }
+    }
+  }
+
+  // ──── 집계 ────
+  const summary = {
+    total_items: analyses.length,
+    total_stock_value: analyses.reduce((s, a) => s + a.stock_value, 0),
+    total_sales_revenue: totalRevAll,
+    sales_period_days: salesPeriodDays,
+    lead_time_days: leadTime,
+    abc_counts: { A: 0, B: 0, C: 0 } as Record<string, number>,
+    status_counts: { stockout_risk: 0, low_stock: 0, optimal: 0, overstock: 0, dead_stock: 0 } as Record<string, number>,
+    avg_days_of_supply: 0,
+    items_needing_reorder: 0,
+  };
+
+  for (const a of analyses) {
+    summary.abc_counts[a.abc_class]++;
+    summary.status_counts[a.status]++;
+    if (a.recommended_order_qty > 0) summary.items_needing_reorder++;
+  }
+
+  const supplyItems = analyses.filter((a) => a.days_of_supply < 999);
+  summary.avg_days_of_supply = supplyItems.length > 0
+    ? Math.round(supplyItems.reduce((s, a) => s + a.days_of_supply, 0) / supplyItems.length)
+    : 0;
+
+  // 위험 품목 (발주 필요)
+  const reorderItems = analyses
+    .filter((a) => a.status === 'stockout_risk' || a.status === 'low_stock')
+    .sort((a, b) => a.days_of_supply - b.days_of_supply);
+
+  // 사장재고
+  const deadStockItems = analyses.filter((a) => a.status === 'dead_stock');
+
+  // 과잉재고
+  const overstockItems = analyses.filter((a) => a.status === 'overstock');
+
+  // TOP 판매 품목
+  const topSellers = [...analyses]
+    .sort((a, b) => b.total_revenue - a.total_revenue)
+    .slice(0, 10);
+
+  // 카테고리별
+  const byCategory: Record<string, { count: number; value: number; revenue: number }> = {};
+  for (const a of analyses) {
+    const cat = a.category || '미분류';
+    if (!byCategory[cat]) byCategory[cat] = { count: 0, value: 0, revenue: 0 };
+    byCategory[cat].count++;
+    byCategory[cat].value += a.stock_value;
+    byCategory[cat].revenue += a.total_revenue;
+  }
+
+  // 월별 판매 트렌드
+  const monthlyTrend: Record<string, { qty: number; amount: number }> = {};
+  for (const rec of salesRecs) {
+    const month = normalizeDate(rec.date).substring(0, 7); // YYYY-MM
+    if (!monthlyTrend[month]) monthlyTrend[month] = { qty: 0, amount: 0 };
+    monthlyTrend[month].qty += rec.quantity;
+    monthlyTrend[month].amount += rec.amount || 0;
+  }
+
+  // ──── AI 인사이트 ────
+  let aiInsight = "";
+  try {
+    const aiData = `
+[KPROS 재고-판매 통합 분석 데이터]
+
+■ 전체 요약
+- 분석 품목: ${summary.total_items}개
+- 총 재고가치: ₩${summary.total_stock_value.toLocaleString()}
+- 기간 총 매출: ₩${summary.total_sales_revenue.toLocaleString()} (${salesPeriodDays}일)
+- 리드타임: ${leadTime}일
+- 평균 재고일수: ${summary.avg_days_of_supply}일
+
+■ ABC 분류 (매출 기여도)
+- A등급 (상위 80%): ${summary.abc_counts.A}개 품목
+- B등급 (80~95%): ${summary.abc_counts.B}개 품목
+- C등급 (하위 5%): ${summary.abc_counts.C}개 품목
+
+■ 재고 상태
+- 품절 위험: ${summary.status_counts.stockout_risk}건
+- 안전재고 부족: ${summary.status_counts.low_stock}건
+- 정상: ${summary.status_counts.optimal}건
+- 과잉재고: ${summary.status_counts.overstock}건
+- 사장재고(판매 0): ${summary.status_counts.dead_stock}건
+
+■ 긴급 발주 필요 (품절 위험 + 부족 품목)
+${reorderItems.slice(0, 15).map((i) =>
+  `- ${i.name}: 현재 ${i.current_stock}${i.unit}, 일평균판매 ${i.avg_daily_sales}${i.unit}/일, 재고일수 ${i.days_of_supply}일, 권장발주 ${i.recommended_order_qty}${i.unit}${i.supplier ? ` [${i.supplier}]` : ''}`
+).join('\n') || '없음'}
+
+■ TOP 10 매출 품목
+${topSellers.map((i, idx) =>
+  `${idx + 1}. ${i.name} (${i.abc_class}등급): 매출 ₩${i.total_revenue.toLocaleString()}, 판매 ${i.total_sold}${i.unit}, 일평균 ${i.avg_daily_sales}${i.unit}/일, 트렌드: ${i.demand_trend === 'increasing' ? '↑증가' : i.demand_trend === 'decreasing' ? '↓감소' : '→안정'}`
+).join('\n') || '판매 데이터 없음'}
+
+■ 사장재고 (판매실적 없음)
+${deadStockItems.slice(0, 10).map((i) =>
+  `- ${i.name}: 재고 ${i.current_stock}${i.unit}, 가치 ₩${i.stock_value.toLocaleString()}`
+).join('\n') || '없음'}
+
+■ 과잉재고
+${overstockItems.slice(0, 10).map((i) =>
+  `- ${i.name}: 현재 ${i.current_stock}${i.unit}, 재고일수 ${i.days_of_supply}일`
+).join('\n') || '없음'}
+
+■ 월별 판매 추이
+${Object.entries(monthlyTrend).sort(([a],[b]) => a.localeCompare(b)).map(([m, d]) =>
+  `- ${m}: ${d.qty}개, ₩${d.amount.toLocaleString()}`
+).join('\n') || '데이터 없음'}
+`;
+
+    aiInsight = await askAIAnalyze(
+      c.env,
+      `다음 KPROS(화장품 원료 전문기업) 재고+판매 통합 데이터를 분석하여 이사님께 보고할 스마트 재고관리 보고서를 작성하세요.
+
+${aiData}
+
+[보고서 구성]
+1. **경영진 요약** - 핵심 지표 3줄 요약
+2. **긴급 발주 권고** - 품절 위험 품목별 발주량/예상비용/우선순위
+3. **ABC 분석 인사이트** - A등급 품목 집중관리 포인트, C등급 재고 축소 방안
+4. **판매 트렌드 분석** - 수요 증가/감소 품목, 계절성, 성장 기회
+5. **사장재고 처리방안** - 판매실적 없는 품목 처분/활용 제안
+6. **안전재고 최적화** - 현재 vs 권장 안전재고 비교, 비용 절감 효과
+7. **공급망 리스크** - 단일 공급사 의존 품목, 리드타임 개선 필요 사항
+8. **1주/1개월 액션플랜** - 즉시 실행 과제와 중기 개선 과제
+
+[작성 규칙]
+- 숫자는 ₩ 단위, 천 단위 콤마 포함
+- 이사님이 5분 안에 의사결정할 수 있도록 간결하게
+- 각 항목은 구체적 수치와 품목명 포함`,
+      "당신은 KPROS(화장품 원료 전문기업) SCM·재고관리 전문 컨설턴트 AI입니다. ABC분석, 안전재고, 수요예측, 공급망 최적화에 전문성을 갖고 경영진 보고 톤으로 분석합니다.",
+      4096
+    );
+  } catch (e) {
+    console.error("[Inventory] Smart analysis AI failed:", e);
+    aiInsight = "AI 분석을 생성할 수 없습니다.";
+  }
+
+  return c.json({
+    status: "success",
+    data: {
+      summary,
+      analyses: analyses.map((a) => ({
+        ...a,
+        avg_daily_sales: a.avg_daily_sales,
+        days_of_supply: a.days_of_supply === 999 ? null : a.days_of_supply,
+      })),
+      reorder_items: reorderItems.map((i) => ({
+        name: i.name, code: i.code, supplier: i.supplier, unit: i.unit,
+        current_stock: i.current_stock, safety_stock: i.safety_stock,
+        reorder_point: i.reorder_point, days_of_supply: i.days_of_supply,
+        recommended_order_qty: i.recommended_order_qty,
+        estimated_cost: i.recommended_order_qty * i.unit_price,
+        demand_trend: i.demand_trend, abc_class: i.abc_class,
+      })),
+      dead_stock_items: deadStockItems.map((i) => ({
+        name: i.name, current_stock: i.current_stock, unit: i.unit,
+        stock_value: i.stock_value, supplier: i.supplier,
+      })),
+      overstock_items: overstockItems.map((i) => ({
+        name: i.name, current_stock: i.current_stock, unit: i.unit,
+        days_of_supply: i.days_of_supply === 999 ? null : i.days_of_supply,
+      })),
+      top_sellers: topSellers.map((i) => ({
+        name: i.name, abc_class: i.abc_class, total_revenue: i.total_revenue,
+        total_sold: i.total_sold, unit: i.unit, avg_daily_sales: i.avg_daily_sales,
+        demand_trend: i.demand_trend, customer_count: i.customer_count,
+      })),
+      by_category: byCategory,
+      monthly_trend: Object.entries(monthlyTrend)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, d]) => ({ month, ...d })),
+      ai_insight: aiInsight,
+      analyzed_at: new Date().toISOString(),
+    },
+    message: "스마트 재고 분석 완료",
+  });
+});
+
+// ═══════════════════════════════════════════════
+// 스마트 분석 보고서 저장/조회/삭제
+// ═══════════════════════════════════════════════
+
+/**
+ * POST /inventory/reports - 스마트 분석 보고서 저장
+ */
+inventory.post("/reports", async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{ report: any; report_name?: string }>();
+
+  if (!body.report) {
+    return c.json({ status: "error", message: "보고서 데이터가 필요합니다" }, 400);
+  }
+
+  const db = drizzle(c.env.DB);
+  const reportDate = new Date().toISOString().split("T")[0];
+  const reportName = body.report_name || `스마트재고분석_${reportDate}`;
+
+  const [saved] = await db.insert(dailyReports).values({
+    reportDate,
+    reportType: "smart_inventory",
+    fileName: reportName,
+    generatedBy: user.userId,
+    emailCount: body.report.summary?.total_items || 0,
+    inventoryTransactionCount: body.report.reorder_items?.length || 0,
+    summaryText: JSON.stringify(body.report),
+  }).returning();
+
+  return c.json({
+    status: "success",
+    data: {
+      id: saved.id,
+      report_name: reportName,
+      report_date: reportDate,
+      storage: {
+        database: "c-auto-db (D1)",
+        table: "daily_reports",
+        report_type: "smart_inventory",
+        record_id: saved.id,
+        api_path: "POST /api/v1/inventory/reports",
+      },
+    },
+    message: "보고서가 저장되었습니다",
+  }, 201);
+});
+
+/**
+ * GET /inventory/reports - 저장된 보고서 목록
+ */
+inventory.get("/reports", async (c) => {
+  const db = drizzle(c.env.DB);
+
+  const reports = await db
+    .select({
+      id: dailyReports.id,
+      reportDate: dailyReports.reportDate,
+      fileName: dailyReports.fileName,
+      generatedBy: dailyReports.generatedBy,
+      itemCount: dailyReports.emailCount,
+      reorderCount: dailyReports.inventoryTransactionCount,
+      createdAt: dailyReports.createdAt,
+    })
+    .from(dailyReports)
+    .where(eq(dailyReports.reportType, "smart_inventory"))
+    .orderBy(desc(dailyReports.createdAt))
+    .limit(50);
+
+  return c.json({ status: "success", data: reports });
+});
+
+/**
+ * GET /inventory/reports/:id - 보고서 상세 조회
+ */
+inventory.get("/reports/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  if (isNaN(id)) return c.json({ status: "error", message: "잘못된 ID" }, 400);
+
+  const db = drizzle(c.env.DB);
+  const [report] = await db
+    .select()
+    .from(dailyReports)
+    .where(eq(dailyReports.id, id))
+    .limit(1);
+
+  if (!report || report.reportType !== "smart_inventory") {
+    return c.json({ status: "error", message: "보고서를 찾을 수 없습니다" }, 404);
+  }
+
+  let reportData = null;
+  try { reportData = JSON.parse(report.summaryText || "{}"); } catch {}
+
+  return c.json({
+    status: "success",
+    data: {
+      id: report.id,
+      report_name: report.fileName,
+      report_date: report.reportDate,
+      report: reportData,
+      created_at: report.createdAt,
+    },
+  });
+});
+
+/**
+ * DELETE /inventory/reports/:id - 보고서 삭제
+ */
+inventory.delete("/reports/:id", async (c) => {
+  const user = c.get("user");
+  const id = parseInt(c.req.param("id"));
+  if (isNaN(id)) return c.json({ status: "error", message: "잘못된 ID" }, 400);
+
+  const db = drizzle(c.env.DB);
+  const [report] = await db
+    .select({ id: dailyReports.id, generatedBy: dailyReports.generatedBy })
+    .from(dailyReports)
+    .where(eq(dailyReports.id, id))
+    .limit(1);
+
+  if (!report) {
+    return c.json({ status: "error", message: "보고서를 찾을 수 없습니다" }, 404);
+  }
+
+  // 본인 또는 관리자만 삭제 가능
+  if (report.generatedBy !== user.userId && user.role !== "admin") {
+    return c.json({ status: "error", message: "삭제 권한이 없습니다" }, 403);
+  }
+
+  await db.delete(dailyReports).where(eq(dailyReports.id, id));
+  return c.json({ status: "success", message: "보고서가 삭제되었습니다" });
 });
 
 export default inventory;

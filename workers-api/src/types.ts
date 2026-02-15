@@ -16,6 +16,10 @@ export interface Env {
   // Secrets (set via wrangler secret put)
   JWT_SECRET: string;
 
+  // AI API Keys (멀티모델 아키텍처)
+  GEMINI_API_KEY?: string;      // Gemini Flash - 분류/요약/스팸필터 (90%)
+  ANTHROPIC_API_KEY?: string;   // Claude Haiku 4.5 + Sonnet 4.5 (8%+2%)
+
   // Gmail OAuth2 (하이웍스→Gmail POP3 포워딩 후 Gmail API로 메일 조회)
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
@@ -23,6 +27,11 @@ export interface Env {
   // Dropbox OAuth2 (KPROS 자료대응 파일 검색)
   DROPBOX_APP_KEY?: string;
   DROPBOX_APP_SECRET?: string;
+
+  // 이카운트 ERP API
+  ECOUNT_COM_CODE?: string;      // 회사코드
+  ECOUNT_USER_ID?: string;       // 사용자 ID
+  ECOUNT_API_CERT_KEY?: string;  // API 인증키
 
   // Vars
   ENVIRONMENT: string;
@@ -53,19 +62,19 @@ export const UserRoleSchema = z.enum([
   'viewer',
 ]);
 
-// Corresponds to Python's UserLogin schema
+// 로그인 스키마 (ID + 비밀번호)
 export const UserLoginSchema = z.object({
-  email: z.string().email({ message: "Invalid email address" }),
-  password: z.string().min(1, { message: "Password is required" }),
+  email: z.string().min(1, { message: "아이디를 입력하세요" }),
+  password: z.string().min(1, { message: "비밀번호를 입력하세요" }),
 });
 
-// Corresponds to Python's UserCreate schema
+// 사용자 생성 스키마 (ID 형식)
 export const UserCreateSchema = z.object({
-  email: z.string().email({ message: "Invalid email address" }),
-  password: z.string().min(8, "Password must be at least 8 characters long"),
-  full_name: z.string().min(2, "Full name must be at least 2 characters").max(100),
+  email: z.string().min(2, "아이디는 2자 이상이어야 합니다").max(50, "아이디는 50자 이하여야 합니다"),
+  password: z.string().min(8, "비밀번호는 8자 이상이어야 합니다"),
+  full_name: z.string().min(2, "이름은 2자 이상이어야 합니다").max(100),
   role: UserRoleSchema.default('staff'),
-  department: z.string().max(50).optional().nullable(), // .nullable() to allow null from JSON
+  department: z.string().max(50).optional().nullable(),
 });
 
 // Corresponds to Python's UserUpdate schema

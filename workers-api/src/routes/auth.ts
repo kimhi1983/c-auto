@@ -35,7 +35,7 @@ auth.post(
       .limit(1);
 
     if (existing) {
-      return c.json({ error: "이미 등록된 이메일입니다" }, 409);
+      return c.json({ error: "이미 등록된 아이디입니다" }, 409);
     }
 
     const hashedPassword = await hash(body.password, 12);
@@ -78,12 +78,12 @@ auth.post("/login", zValidator("json", UserLoginSchema), async (c) => {
     .limit(1);
 
   if (!user || !user.isActive) {
-    return c.json({ detail: "이메일 또는 비밀번호가 올바르지 않습니다" }, 401);
+    return c.json({ detail: "아이디 또는 비밀번호가 올바르지 않습니다" }, 401);
   }
 
   const valid = await compare(body.password, user.passwordHash);
   if (!valid) {
-    return c.json({ detail: "이메일 또는 비밀번호가 올바르지 않습니다" }, 401);
+    return c.json({ detail: "아이디 또는 비밀번호가 올바르지 않습니다" }, 401);
   }
 
   const token = await createToken(c.env, user.id, user.email, user.role);

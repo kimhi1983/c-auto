@@ -121,14 +121,16 @@ export default function UsersPage() {
           <h3 className="text-base font-semibold text-slate-900 mb-4">새 사용자 등록</h3>
           <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">이메일</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">아이디</label>
               <input
-                type="email"
+                type="text"
                 value={newUser.email}
                 onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none"
-                placeholder="user@company.com"
+                placeholder="사용자 아이디"
                 required
+                minLength={2}
+                maxLength={50}
               />
             </div>
             <div>
@@ -201,7 +203,7 @@ export default function UsersPage() {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">이름</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">이메일</th>
+                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">아이디</th>
                 <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">역할</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">부서</th>
                 <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">상태</th>

@@ -12,6 +12,8 @@ import files from './routes/files';
 import aiDocs from './routes/ai-docs';
 import gmail from './routes/gmail';
 import dropbox from './routes/dropbox';
+import erp from './routes/erp';
+import { getAIEngineStatus } from './services/ai';
 import type { Env, UserContext } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: { user: UserContext } }>();
@@ -21,7 +23,12 @@ app.use('*', async (c, next) => {
   const allowedOrigins = (c.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   const origin = c.req.header('Origin');
 
-  const allowOrigin = (origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0] || '*';
+  // 정확한 매칭 또는 *.c-auto.pages.dev 프리뷰 URL 허용
+  const isAllowed = origin && (
+    allowedOrigins.includes(origin) ||
+    /^https:\/\/[a-z0-9-]+\.c-auto\.pages\.dev$/.test(origin)
+  );
+  const allowOrigin = isAllowed ? origin : allowedOrigins[0] || '*';
 
   const corsMiddleware = cors({
     origin: allowOrigin,
@@ -47,6 +54,7 @@ app.route('/api/v1/files', files);
 app.route('/api/v1/ai-docs', aiDocs);
 app.route('/api/v1/gmail', gmail);
 app.route('/api/v1/dropbox', dropbox);
+app.route('/api/v1/erp', erp);
 
 // 상태 확인 라우트
 app.get('/api/status', (c) => {
@@ -55,6 +63,14 @@ app.get('/api/status', (c) => {
     message: '시스템이 정상 작동 중입니다.',
     version: '3.0.0',
     env: c.env.ENVIRONMENT,
+  });
+});
+
+// AI 엔진 상태 (인증 불필요)
+app.get('/api/v1/ai/status', (c) => {
+  return c.json({
+    status: 'success',
+    data: getAIEngineStatus(c.env),
   });
 });
 

@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, desc, like, and, count, gte, sql } from "drizzle-orm";
 import { archivedDocuments, dailyReports, emails } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
+import { askAIAnalyze } from "../services/ai";
 import type { Env } from "../types";
 
 const archives = new Hono<{ Bindings: Env }>();
@@ -248,7 +249,55 @@ archives.delete("/:id", async (c) => {
 });
 
 /**
- * POST /archives/generate-report - 리포트 생성
+ * 리포트 summaryText 파싱 헬퍼 - JSON이면 파싱, 아니면 레거시 plain text 반환
+ */
+function parseReportData(summaryText: string | null): any {
+  if (!summaryText) return null;
+  try {
+    const parsed = JSON.parse(summaryText);
+    if (parsed && parsed.title) return parsed; // 구조화된 데이터
+  } catch {
+    // plain text (레거시) → 기본 구조로 변환
+  }
+  return { legacy_text: summaryText };
+}
+
+/**
+ * GET /archives/reports/:id - 개별 리포트 조회
+ */
+archives.get("/reports/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+
+  const [report] = await db
+    .select()
+    .from(dailyReports)
+    .where(eq(dailyReports.id, id))
+    .limit(1);
+
+  if (!report) {
+    return c.json({ detail: "리포트를 찾을 수 없습니다" }, 404);
+  }
+
+  const reportData = parseReportData(report.summaryText);
+
+  return c.json({
+    status: "success",
+    data: {
+      id: report.id,
+      report_date: report.reportDate,
+      report_type: report.reportType,
+      file_name: report.fileName || `report_${report.reportDate}.txt`,
+      email_count: report.emailCount || 0,
+      summary: report.summaryText,
+      report_data: reportData,
+      created_at: report.createdAt,
+    },
+  });
+});
+
+/**
+ * POST /archives/generate-report - AI 기반 상세 리포트 생성 (구조화 JSON)
  */
 archives.post("/generate-report", async (c) => {
   const reportType = c.req.query("report_type") || "daily";
@@ -256,26 +305,234 @@ archives.post("/generate-report", async (c) => {
   const user = c.get("user");
   const today = new Date().toISOString().split("T")[0];
 
-  // 이메일 수 집계
+  // 리포트 기간 설정
+  const now = new Date();
+  let startDate: string;
+  if (reportType === "weekly") {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 7);
+    startDate = d.toISOString().split("T")[0];
+  } else if (reportType === "monthly") {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() - 1);
+    startDate = d.toISOString().split("T")[0];
+  } else {
+    startDate = today;
+  }
+
+  const typeLabel = reportType === "daily" ? "일간" : reportType === "weekly" ? "주간" : "월간";
+  const periodLabel = reportType === "daily" ? today : `${startDate} ~ ${today}`;
+
+  // 기간 내 이메일 조회
+  const emailList = await db
+    .select({
+      id: emails.id,
+      subject: emails.subject,
+      sender: emails.sender,
+      category: emails.category,
+      priority: emails.priority,
+      status: emails.status,
+      aiSummary: emails.aiSummary,
+      receivedAt: emails.receivedAt,
+    })
+    .from(emails)
+    .where(gte(emails.receivedAt, startDate))
+    .orderBy(desc(emails.receivedAt))
+    .limit(500);
+
+  // 전체 이메일 수
   const [emailCount] = await db.select({ total: count() }).from(emails);
+
+  // 데이터 수집
+  const categoryMap: Record<string, number> = {};
+  const priorityMap: Record<string, number> = {};
+  const approvalItems: Array<{ subject: string; sender: string; company: string; summary: string; category: string }> = [];
+  const keyEmailItems: Array<{ category: string; subject: string; sender: string; company: string; summary: string; priority: string }> = [];
+  const emailDetails: Array<{
+    no: number; received_at: string; category: string; code: string;
+    sender: string; company: string; subject: string; summary: string;
+    priority: string; status: string; action_items: string; needs_approval: boolean;
+  }> = [];
+
+  const catCodeMap: Record<string, string> = {
+    "자료대응": "A", "영업기회": "B", "스케줄링": "C", "정보수집": "D", "필터링": "E",
+  };
+
+  for (let idx = 0; idx < emailList.length; idx++) {
+    const e = emailList[idx];
+    const cat = e.category || "미분류";
+    categoryMap[cat] = (categoryMap[cat] || 0) + 1;
+    const pri = e.priority || "medium";
+    priorityMap[pri] = (priorityMap[pri] || 0) + 1;
+
+    let parsed: any = null;
+    if (e.aiSummary) {
+      try { parsed = JSON.parse(e.aiSummary); } catch {}
+    }
+
+    const summary = parsed?.summary || (typeof e.aiSummary === "string" && !e.aiSummary.startsWith("{") ? e.aiSummary : "") || "";
+    const directorReport = parsed?.director_report || "";
+    const actionItems = parsed?.action_items || "";
+    const needsApproval = parsed?.needs_approval === true;
+    const company = parsed?.company_name || "";
+
+    emailDetails.push({
+      no: idx + 1,
+      received_at: e.receivedAt || "",
+      category: cat,
+      code: catCodeMap[cat] || "-",
+      sender: e.sender || "",
+      company,
+      subject: e.subject || "",
+      summary,
+      priority: pri === "high" ? "긴급" : pri === "medium" ? "일반" : "낮음",
+      status: e.status === "unread" ? "미처리" : e.status === "read" ? "확인" : e.status === "replied" ? "답변완료" : e.status || "",
+      action_items: actionItems,
+      needs_approval: needsApproval,
+    });
+
+    if (needsApproval) {
+      approvalItems.push({ subject: e.subject || "", sender: e.sender || "", company, summary: directorReport || summary, category: cat });
+    }
+
+    if (pri === "high" || cat === "영업기회") {
+      keyEmailItems.push({ category: cat, subject: e.subject || "", sender: e.sender || "", company, summary: directorReport || summary, priority: pri === "high" ? "긴급" : "일반" });
+    }
+  }
+
+  // 카테고리 통계 배열
+  const catOrder = ["자료대응", "영업기회", "스케줄링", "정보수집", "필터링"];
+  const catCodes = ["A", "B", "C", "D", "E"];
+  const categories = catOrder.map((name, i) => ({
+    code: catCodes[i], name, count: categoryMap[name] || 0,
+  }));
+  // 기타 카테고리 추가
+  for (const [cat, cnt] of Object.entries(categoryMap)) {
+    if (!catOrder.includes(cat)) {
+      categories.push({ code: "-", name: cat, count: cnt });
+    }
+  }
+
+  // AI 분석 요약
+  let aiInsight = "";
+  if (emailList.length > 0) {
+    try {
+      const summaryData = emailList.slice(0, 30).map((e) => {
+        let p: any = null;
+        try { p = JSON.parse(e.aiSummary || ""); } catch {}
+        return `[${e.category}] ${e.subject} - ${p?.summary || ""}`;
+      }).join("\n");
+
+      aiInsight = await askAIAnalyze(
+        c.env,
+        `다음은 KPROS의 ${typeLabel} 이메일 현황입니다. 이사님을 위한 3줄 핵심 요약과 이번 주 주의해야 할 사항을 간결하게 작성하세요.\n\n${summaryData}`,
+        "당신은 KPROS(화장품 원료 전문기업) 경영 보고서 작성 전문가입니다. 이사님께 보고하는 톤으로, 핵심만 간결하게 작성합니다.",
+        1024
+      );
+    } catch (e) {
+      console.error("[Report] AI insight generation failed:", e);
+    }
+  }
+
+  // 구조화된 리포트 데이터
+  const reportData = {
+    title: `KPROS ${typeLabel} 업무 리포트`,
+    type: reportType,
+    type_label: typeLabel,
+    period: periodLabel,
+    start_date: startDate,
+    end_date: today,
+    generated_at: new Date().toISOString(),
+    overview: {
+      total_emails: emailCount.total,
+      period_emails: emailList.length,
+      approval_needed: approvalItems.length,
+      key_emails_count: keyEmailItems.length,
+    },
+    categories,
+    priorities: {
+      high: priorityMap["high"] || 0,
+      medium: priorityMap["medium"] || 0,
+      low: priorityMap["low"] || 0,
+    },
+    key_emails: keyEmailItems.slice(0, 15),
+    approval_items: approvalItems.slice(0, 15),
+    ai_insight: aiInsight,
+    email_details: emailDetails,
+  };
 
   const [report] = await db
     .insert(dailyReports)
     .values({
       reportDate: today,
       reportType: reportType,
-      fileName: `${reportType}_report_${today}.txt`,
+      fileName: `KPROS_${typeLabel}_리포트_${today}.xlsx`,
       generatedBy: user.userId,
-      emailCount: emailCount.total,
-      summaryText: `${reportType} 리포트 - ${today} 생성\n이메일 ${emailCount.total}건 처리`,
+      emailCount: emailList.length,
+      summaryText: JSON.stringify(reportData),
     })
     .returning();
 
   return c.json({
     status: "success",
-    data: report,
-    message: `${reportType} 리포트 생성 완료`,
+    data: {
+      id: report.id,
+      report_date: report.reportDate,
+      report_type: report.reportType,
+      file_name: report.fileName,
+      email_count: report.emailCount,
+      summary: report.summaryText,
+      report_data: reportData,
+      created_at: report.createdAt,
+    },
+    message: `${typeLabel} 리포트 생성 완료`,
   });
+});
+
+/**
+ * DELETE /archives/reports/:id - 개별 리포트 삭제
+ */
+archives.delete("/reports/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+
+  const [report] = await db
+    .select()
+    .from(dailyReports)
+    .where(eq(dailyReports.id, id))
+    .limit(1);
+
+  if (!report) {
+    return c.json({ detail: "리포트를 찾을 수 없습니다" }, 404);
+  }
+
+  await db.delete(dailyReports).where(eq(dailyReports.id, id));
+
+  return c.json({ status: "success", message: "리포트 삭제 완료" });
+});
+
+/**
+ * DELETE /archives/reports - 리포트 일괄 삭제
+ */
+archives.delete("/reports", async (c) => {
+  const db = drizzle(c.env.DB);
+
+  const idsParam = c.req.query("ids");
+  if (idsParam) {
+    // 선택한 ID들만 삭제
+    const ids = idsParam.split(",").map(Number).filter(Boolean);
+    let deleted = 0;
+    for (const id of ids) {
+      await db.delete(dailyReports).where(eq(dailyReports.id, id));
+      deleted++;
+    }
+    return c.json({ status: "success", data: { deleted_count: deleted }, message: `${deleted}건 삭제 완료` });
+  }
+
+  // ids 없으면 전체 삭제
+  const [{ total }] = await db.select({ total: count() }).from(dailyReports);
+  await db.delete(dailyReports);
+  return c.json({ status: "success", data: { deleted_count: total }, message: `전체 ${total}건 삭제 완료` });
 });
 
 /**

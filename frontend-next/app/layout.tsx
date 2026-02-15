@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "C-Auto - 스마트 이메일 분석",
+  title: "C-Auto",
   description: "AI 기반 업무 자동화 플랫폼",
 };
 

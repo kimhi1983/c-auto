@@ -4,7 +4,7 @@
  */
 
 const DROPBOX_AUTH_URL = "https://www.dropbox.com/oauth2/authorize";
-const DROPBOX_TOKEN_URL = "https://api.dropboxapi.com/2/oauth2/token";
+const DROPBOX_TOKEN_URL = "https://api.dropboxapi.com/oauth2/token";
 const DROPBOX_API_URL = "https://api.dropboxapi.com/2";
 
 // ─── OAuth2 ───
@@ -310,10 +310,11 @@ export async function ensureDropboxFolderStructure(
 export async function uploadDropboxFile(
   accessToken: string,
   path: string,
-  content: string
+  content: string | Uint8Array
 ): Promise<{ name: string; path: string; size: number }> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(content);
+  const data = typeof content === "string"
+    ? new TextEncoder().encode(content)
+    : content;
 
   const res = await fetch(`${DROPBOX_CONTENT_URL}/files/upload`, {
     method: "POST",

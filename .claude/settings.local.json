@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx wrangler deploy)",
+      "Bash(npm run build:*)",
+      "Bash(npx wrangler pages deploy:*)",
+      "Bash(npm install:*)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(npx wrangler secret list:*)",
+      "Bash(npx wrangler secret put:*)",
+      "Bash(npx tsc:*)",
+      "Bash(findstr:*)",
+      "Bash(head:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(npx wrangler d1 execute:*)",
+      "Bash(python -c \"\nimport urllib.request\nimport json\n\nCOM_CODE = ''627250''\nUSER_ID = ''KIMHI1983''\nAPI_KEY = ''2719d63974b39434287a31528bc279cc17''\nPASSWORD = ''kak830912!''\n\ntest_url = ''http://sboapi.ecount.com/ECERP/OAPI/Login''\n\npayload = {\n    ''COM_CODE'': COM_CODE,\n    ''USER_ID'': USER_ID,\n    ''API_KEY'': API_KEY,\n    ''LAN_TYPE'': ''ko-KR'',\n    ''ZONE_NODES'': '''',\n    ''PASSWORD'': PASSWORD\n}\n\ntry:\n    data = json.dumps\\(payload\\).encode\\(''utf-8''\\)\n    req = urllib.request.Request\\(test_url, data=data, headers={''Content-Type'': ''application/json''}\\)\n    with urllib.request.urlopen\\(req, timeout=15\\) as resp:\n        result = json.loads\\(resp.read\\(\\).decode\\(''utf-8''\\)\\)\n        print\\(''Response:'', json.dumps\\(result, indent=2, ensure_ascii=False\\)\\)\n        if str\\(result.get\\(''Status''\\)\\) == ''200'':\n            print\\(\\)\n            print\\(''*** 검증 성공! 이제 이카운트 ERP [API인증현황] 메뉴를 새로고침 해보세요. ***''\\)\n        else:\n            print\\(\\)\n            print\\(f''실패 사유: {result.get\\(\"\"Error\"\"\\) or result.get\\(\"\"Errors\"\"\\)}''\\)\nexcept Exception as e:\n    print\\(f''연결 오류: {e}''\\)\n\")",
+      "Bash(__NEW_LINE_61d2ca1b5bdf8633__ echo \"=== GetBasicProductsList \\(품목조회\\) ===\")",
+      "Bash(__NEW_LINE_61d2ca1b5bdf8633__ echo \"\")",
+      "Bash(__NEW_LINE_75be1d2e83c2891b__ echo \"=== SaveSaleOrder \\(주문서입력\\) - 실제 품목코드 ===\")",
+      "Bash(__NEW_LINE_75be1d2e83c2891b__ echo \"\")",
+      "WebFetch(domain:www.inflearn.com)",
+      "Bash(__NEW_LINE_48b86318f7feabd5__ echo \"=== SaveSale - 올바른 BulkDatas 구조 ===\")",
+      "Bash(__NEW_LINE_48b86318f7feabd5__ echo \"\")"
+    ]
+  }
+}

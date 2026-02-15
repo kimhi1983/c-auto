@@ -81,7 +81,7 @@ files.get("/recommend", async (c) => {
 
 ${context.slice(0, 500)}`;
 
-  const keywordsText = await askAI(c.env.AI, keywordPrompt);
+  const keywordsText = await askAI(c.env, keywordPrompt);
   const keywords = keywordsText.split(",").map((k: string) => k.trim());
 
   const db = drizzle(c.env.DB);
