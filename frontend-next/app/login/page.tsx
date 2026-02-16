@@ -4,16 +4,16 @@ import { useState, useEffect } from 'react';
 import { apiUrl } from '@/lib/api';
 
 export default function LoginPage() {
-  const [userId, setUserId] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const savedId = localStorage.getItem('saved_id');
-    if (savedId) {
-      setUserId(savedId);
+    const savedEmail = localStorage.getItem('saved_email');
+    if (savedEmail) {
+      setEmail(savedEmail);
       setRememberMe(true);
     }
   }, []);
@@ -29,7 +29,7 @@ export default function LoginPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email: userId, password }),
+        body: JSON.stringify({ email, password }),
       });
 
       if (!response.ok) {
@@ -46,14 +46,14 @@ export default function LoginPage() {
       localStorage.setItem('access_token', data.access_token);
 
       if (rememberMe) {
-        localStorage.setItem('saved_id', userId);
+        localStorage.setItem('saved_email', email);
       } else {
-        localStorage.removeItem('saved_id');
+        localStorage.removeItem('saved_email');
       }
 
       window.location.href = '/dashboard';
     } catch (err: any) {
-      setError(err.message || '아이디 또는 비밀번호가 올바르지 않습니다.');
+      setError(err.message || '이메일 또는 비밀번호가 올바르지 않습니다.');
       setLoading(false);
     }
   };
@@ -67,10 +67,11 @@ export default function LoginPage() {
       <div className="relative z-10 w-full max-w-md mx-4">
         {/* Logo card */}
         <div className="text-center mb-8 animate-fadeIn">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-slate-800 via-slate-800 to-indigo-900 rounded-2xl shadow-lg ring-1 ring-slate-700/10 mb-4">
-            <span className="text-white font-extrabold text-2xl tracking-tight">C</span>
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-lg mb-4">
+            <span className="text-white font-bold text-2xl">C</span>
           </div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">C-Auto</h1>
+          <h1 className="text-3xl font-bold text-slate-900">C-Auto</h1>
+          <p className="text-sm text-slate-500 mt-1.5">스마트 이메일 분석 시스템</p>
         </div>
 
         {/* Login form */}
@@ -78,14 +79,14 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">
-                아이디
+                이메일
               </label>
               <input
-                type="text"
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-700 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 focus:outline-none transition-all placeholder:text-slate-400"
-                placeholder="아이디를 입력하세요"
+                placeholder="이메일을 입력하세요"
                 required
               />
             </div>

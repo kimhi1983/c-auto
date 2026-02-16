@@ -83,132 +83,6 @@ function StatCard({ title, value, icon, color, bgColor, subtitle, delay }: {
 }
 
 /* ========================================
-   Currency Calculator
-   ======================================== */
-
-const CURRENCIES = [
-  { code: 'KRW', label: '원 (KRW)', flag: '🇰🇷' },
-  { code: 'USD', label: '달러 (USD)', flag: '🇺🇸' },
-  { code: 'CNY', label: '위안 (CNY)', flag: '🇨🇳' },
-] as const;
-
-type CurrencyCode = 'KRW' | 'USD' | 'CNY';
-
-function CurrencyCalculator({ rates }: { rates: ExchangeRate }) {
-  const [fromCurrency, setFromCurrency] = useState<CurrencyCode>('USD');
-  const [toCurrency, setToCurrency] = useState<CurrencyCode>('KRW');
-  const [amount, setAmount] = useState('1');
-
-  const convert = (val: number, from: CurrencyCode, to: CurrencyCode): number => {
-    if (from === to) return val;
-    // Convert to KRW first, then to target
-    let krw = val;
-    if (from === 'USD') krw = val * rates.USD_KRW;
-    else if (from === 'CNY') krw = val * rates.CNY_KRW;
-    // KRW → target
-    if (to === 'KRW') return krw;
-    if (to === 'USD') return krw / rates.USD_KRW;
-    if (to === 'CNY') return krw / rates.CNY_KRW;
-    return krw;
-  };
-
-  const swap = () => {
-    setFromCurrency(toCurrency);
-    setToCurrency(fromCurrency);
-  };
-
-  const numAmount = parseFloat(amount) || 0;
-  const result = convert(numAmount, fromCurrency, toCurrency);
-
-  const formatResult = (val: number, currency: CurrencyCode) => {
-    if (currency === 'KRW') return val.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
-    return val.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  const currencySymbol = (code: CurrencyCode) => {
-    if (code === 'KRW') return '₩';
-    if (code === 'USD') return '$';
-    return '¥';
-  };
-
-  return (
-    <div className="mt-4 pt-4 border-t border-slate-100">
-      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">환율 계산기</div>
-
-      {/* Amount Input */}
-      <div className="relative mb-3">
-        <input
-          type="text"
-          inputMode="decimal"
-          value={amount}
-          onChange={(e) => {
-            const v = e.target.value.replace(/[^0-9.]/g, '');
-            setAmount(v);
-          }}
-          className="w-full pl-3 pr-20 py-2.5 text-sm font-semibold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent"
-          placeholder="금액 입력"
-        />
-        <select
-          value={fromCurrency}
-          onChange={(e) => setFromCurrency(e.target.value as CurrencyCode)}
-          className="absolute right-1 top-1 bottom-1 px-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg focus:outline-none cursor-pointer"
-        >
-          {CURRENCIES.map((c) => (
-            <option key={c.code} value={c.code}>{c.flag} {c.code}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Swap Button */}
-      <div className="flex justify-center -my-1 relative z-10">
-        <button
-          onClick={swap}
-          className="w-8 h-8 bg-white border-2 border-slate-200 rounded-full flex items-center justify-center hover:border-brand-400 hover:bg-brand-50 transition-all text-slate-400 hover:text-brand-600"
-          title="통화 전환"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
-          </svg>
-        </button>
-      </div>
-
-      {/* Result */}
-      <div className="relative mt-2">
-        <div className="w-full pl-3 pr-20 py-2.5 text-sm font-bold text-slate-800 bg-gradient-to-r from-brand-50 to-blue-50 border border-brand-200 rounded-xl">
-          {numAmount > 0 ? (
-            <>{currencySymbol(toCurrency)} {formatResult(result, toCurrency)}</>
-          ) : (
-            <span className="text-slate-400 font-normal">결과</span>
-          )}
-        </div>
-        <select
-          value={toCurrency}
-          onChange={(e) => setToCurrency(e.target.value as CurrencyCode)}
-          className="absolute right-1 top-1 bottom-1 px-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg focus:outline-none cursor-pointer"
-        >
-          {CURRENCIES.map((c) => (
-            <option key={c.code} value={c.code}>{c.flag} {c.code}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Quick Amounts */}
-      <div className="flex gap-1.5 mt-3">
-        {['100', '1000', '10000'].map((q) => (
-          <button
-            key={q}
-            onClick={() => setAmount(q)}
-            className="flex-1 text-xs py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600 font-medium transition-colors border border-slate-100"
-          >
-            {Number(q).toLocaleString()}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ========================================
    Main Dashboard
    ======================================== */
 
@@ -292,7 +166,7 @@ export default function DashboardPage() {
       {/* Welcome Section */}
       <div className="animate-fadeIn">
         <h1 className="text-2xl font-bold text-slate-900">대시보드</h1>
-        <p className="text-sm text-slate-500 mt-1">KPROS 업무 자동화 현황</p>
+        <p className="text-sm text-slate-500 mt-1">C-Auto 스마트 이메일 분석 시스템 현황</p>
       </div>
 
       {/* Stats Grid */}
@@ -392,7 +266,6 @@ export default function DashboardPage() {
                 <div className="text-xs text-slate-400 text-center pt-1">
                   {rates.updated_at ? `업데이트: ${new Date(rates.updated_at).toLocaleDateString('ko-KR')}` : ''}
                 </div>
-                <CurrencyCalculator rates={rates} />
               </div>
             ) : (
               <div className="text-sm text-slate-400 text-center py-8">환율 정보를 불러올 수 없습니다.</div>

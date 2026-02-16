@@ -18,9 +18,7 @@ const NAV_ITEMS = [
   { href: '/dashboard', label: '대시보드', icon: 'home' },
   { href: '/emails', label: '이메일', icon: 'mail' },
   { href: '/ai-docs', label: 'AI 문서', icon: 'sparkles' },
-  { href: '/files', label: '파일 검색', icon: 'search' },
   { href: '/archives', label: '아카이브', icon: 'archive' },
-  { href: '/erp', label: 'ERP 현황', icon: 'chart' },
   { href: '/inventory', label: '재고 관리', icon: 'box' },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
 ];
@@ -62,12 +60,6 @@ function NavIcon({ icon, className }: { icon: string; className?: string }) {
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-        </svg>
-      );
-    case 'chart':
-      return (
-        <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
         </svg>
       );
     case 'users':
@@ -169,15 +161,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="h-16 flex items-center px-4 border-b border-slate-100">
           {sidebarOpen ? (
             <Link href="/dashboard" className="flex items-center gap-2.5">
-              <div className="w-9 h-9 bg-gradient-to-br from-slate-800 via-slate-800 to-indigo-900 rounded-xl flex items-center justify-center shadow-sm ring-1 ring-slate-700/10">
-                <span className="text-white font-extrabold text-sm tracking-tight">C</span>
+              <div className="w-9 h-9 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl flex items-center justify-center shadow-sm">
+                <span className="text-white font-bold text-sm">C</span>
               </div>
-              <span className="text-[15px] font-bold text-slate-900 tracking-tight">C-Auto</span>
+              <div>
+                <span className="text-base font-bold text-slate-900 block leading-tight">C-Auto</span>
+                <span className="text-[10px] text-slate-400 font-medium">Smart Email Analysis</span>
+              </div>
             </Link>
           ) : (
             <Link href="/dashboard" className="mx-auto">
-              <div className="w-9 h-9 bg-gradient-to-br from-slate-800 via-slate-800 to-indigo-900 rounded-xl flex items-center justify-center shadow-sm ring-1 ring-slate-700/10">
-                <span className="text-white font-extrabold text-sm tracking-tight">C</span>
+              <div className="w-9 h-9 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl flex items-center justify-center shadow-sm">
+                <span className="text-white font-bold text-sm">C</span>
               </div>
             </Link>
           )}

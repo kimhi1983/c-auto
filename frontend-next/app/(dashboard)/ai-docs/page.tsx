@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
-type Tab = 'write' | 'analyze' | 'rewrite';
+type Tab = 'write' | 'analyze' | 'rewrite' | 'search' | 'folder';
 
 interface Template {
   id: string;
@@ -20,6 +20,18 @@ interface HistoryItem {
   created_at: string;
 }
 
+interface FileResult {
+  name: string;
+  path: string;
+  size: string | number;
+  modified?: string;
+}
+
+interface DropboxStatus {
+  configured: boolean;
+  token_valid: boolean;
+}
+
 const ANALYSIS_TYPES = [
   { id: 'general', name: '종합 분석', description: '문서 유형, 핵심 요약, 주요 항목, 후속 조치' },
   { id: 'contract', name: '계약서 분석', description: '조항별 리스크, 유불리 분석, 수정 권고' },
@@ -31,6 +43,11 @@ export default function AiDocsPage() {
   const [tab, setTab] = useState<Tab>('write');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  // Dropbox
+  const [dropboxStatus, setDropboxStatus] = useState<DropboxStatus | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(true);
+  const [connecting, setConnecting] = useState(false);
 
   // Write tab
   const [selectedTemplate, setSelectedTemplate] = useState('');
@@ -51,6 +68,16 @@ export default function AiDocsPage() {
   const [rewriteResult, setRewriteResult] = useState('');
   const [rewriteLoading, setRewriteLoading] = useState(false);
 
+  // Search tab
+  const [keyword, setKeyword] = useState('');
+  const [searchResults, setSearchResults] = useState<FileResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+
+  // Folder tab
+  const [aiFiles, setAiFiles] = useState<FileResult[]>([]);
+  const [loadingFolder, setLoadingFolder] = useState(false);
+
   const [error, setError] = useState('');
 
   // File upload
@@ -59,39 +86,54 @@ export default function AiDocsPage() {
   const writeFileRef = useRef<HTMLInputElement>(null);
   const analyzeFileRef = useRef<HTMLInputElement>(null);
 
-  // ─── 파일 파싱 시스템 ───
+  useEffect(() => {
+    checkDropboxStatus();
+    loadTemplates();
+    loadHistory();
+  }, []);
 
-  const TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'rtf', 'tsv', 'ini', 'yaml', 'yml', 'sql', 'env', 'cfg', 'conf', 'properties'];
-  const EXCEL_EXTENSIONS = ['xlsx', 'xls', 'ods', 'xlsm'];
-  const WORD_EXTENSIONS = ['docx'];
-  const PDF_EXTENSIONS = ['pdf'];
-  const ALL_EXTENSIONS = [...TEXT_EXTENSIONS, ...EXCEL_EXTENSIONS, ...WORD_EXTENSIONS, ...PDF_EXTENSIONS];
-  const ACCEPT_STRING = ALL_EXTENSIONS.map(e => `.${e}`).join(',');
-  const MAX_FILE_SIZE_TEXT = 2 * 1024 * 1024; // 2MB
-  const MAX_FILE_SIZE_BINARY = 10 * 1024 * 1024; // 10MB
-
-  const [fileLoading, setFileLoading] = useState(false);
-  const [writeDragOver, setWriteDragOver] = useState(false);
-  const [analyzeDragOver, setAnalyzeDragOver] = useState(false);
-
-  const handleDrop = (e: React.DragEvent, handler: (file: File | undefined) => void, setDrag: (v: boolean) => void) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDrag(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) handler(file);
+  const checkDropboxStatus = async () => {
+    setCheckingStatus(true);
+    try {
+      const response = await fetch(apiUrl('/api/v1/dropbox/status'));
+      if (response.ok) {
+        const data = await response.json();
+        setDropboxStatus(data.data);
+      }
+    } catch (err) {
+      console.error('드롭박스 상태 확인 오류:', err);
+    } finally {
+      setCheckingStatus(false);
+    }
   };
 
-  const handleDragOver = (e: React.DragEvent, setDrag: (v: boolean) => void) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDrag(true);
-  };
+  const connectDropbox = async () => {
+    setConnecting(true);
+    try {
+      const response = await fetch(apiUrl('/api/v1/dropbox/auth-url'), {
+        headers: authHeaders(),
+      });
+      if (!response.ok) throw new Error('인증 URL 생성 실패');
+      const data = await response.json();
 
-  const handleDragLeave = (e: React.DragEvent, setDrag: (v: boolean) => void) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDrag(false);
+      if (data.status === 'success' && data.auth_url) {
+        const authWindow = window.open(data.auth_url, '_blank', 'width=600,height=700');
+        const checkInterval = setInterval(async () => {
+          if (authWindow && authWindow.closed) {
+            clearInterval(checkInterval);
+            await checkDropboxStatus();
+            setConnecting(false);
+          }
+        }, 3000);
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          setConnecting(false);
+        }, 300000);
+      }
+    } catch (err: any) {
+      alert(err.message || '드롭박스 연결에 실패했습니다.');
+      setConnecting(false);
+    }
   };
 
   const readFileAsText = (file: File): Promise<string> => {
@@ -103,151 +145,38 @@ export default function AiDocsPage() {
     });
   };
 
-  const parseExcelFile = async (file: File): Promise<string> => {
-    const XLSX = await import('xlsx');
-    const data = await file.arrayBuffer();
-    const wb = XLSX.read(data, { type: 'array' });
-    let text = '';
-    for (const sheetName of wb.SheetNames) {
-      const sheet = wb.Sheets[sheetName];
-      text += `\n[시트: ${sheetName}]\n`;
-      text += XLSX.utils.sheet_to_csv(sheet, { FS: '\t', RS: '\n' });
-      text += '\n';
-    }
-    return text.trim();
-  };
-
-  const parseDocxFile = async (file: File): Promise<string> => {
-    const mammoth = await import('mammoth');
-    const data = await file.arrayBuffer();
-    const result = await mammoth.extractRawText({ arrayBuffer: data });
-    return result.value || '';
-  };
-
-  const parsePdfFile = async (file: File): Promise<string> => {
-    // CDN에서 pdf.js 동적 로드
-    if (!(window as any).pdfjsLib) {
-      await new Promise<void>((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error('PDF 라이브러리 로드 실패'));
-        document.head.appendChild(script);
-      });
-    }
-    const pdfjsLib = (window as any).pdfjsLib;
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    const data = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data }).promise;
-    let text = '';
-    const maxPages = Math.min(pdf.numPages, 50); // 최대 50페이지
-    for (let i = 1; i <= maxPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      text += content.items.map((item: any) => item.str).join(' ') + '\n';
-    }
-    if (pdf.numPages > 50) {
-      text += `\n[... ${pdf.numPages - 50}페이지 생략됨 (총 ${pdf.numPages}페이지)]`;
-    }
-    return text.trim();
-  };
-
-  const parseFile = async (file: File): Promise<string> => {
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-
-    if (TEXT_EXTENSIONS.includes(ext)) {
-      return readFileAsText(file);
-    }
-    if (EXCEL_EXTENSIONS.includes(ext)) {
-      return parseExcelFile(file);
-    }
-    if (WORD_EXTENSIONS.includes(ext)) {
-      return parseDocxFile(file);
-    }
-    if (PDF_EXTENSIONS.includes(ext)) {
-      return parsePdfFile(file);
-    }
-    throw new Error(`지원하지 않는 파일 형식: ${ext}`);
-  };
-
-  const getFileTypeLabel = (ext: string): string => {
-    if (EXCEL_EXTENSIONS.includes(ext)) return 'Excel';
-    if (WORD_EXTENSIONS.includes(ext)) return 'Word';
-    if (PDF_EXTENSIONS.includes(ext)) return 'PDF';
-    if (ext === 'csv') return 'CSV';
-    if (ext === 'json') return 'JSON';
-    if (ext === 'xml') return 'XML';
-    if (['html', 'htm'].includes(ext)) return 'HTML';
-    if (ext === 'md') return 'Markdown';
-    if (['yaml', 'yml'].includes(ext)) return 'YAML';
-    if (ext === 'sql') return 'SQL';
-    return '텍스트';
-  };
-
-  const getFileIcon = (ext: string): string => {
-    if (EXCEL_EXTENSIONS.includes(ext)) return '\uD83D\uDCCA';
-    if (WORD_EXTENSIONS.includes(ext)) return '\uD83D\uDCC4';
-    if (PDF_EXTENSIONS.includes(ext)) return '\uD83D\uDCD5';
-    if (ext === 'csv') return '\uD83D\uDCC8';
-    if (ext === 'json') return '\u2699\uFE0F';
-    if (['html', 'htm'].includes(ext)) return '\uD83C\uDF10';
-    if (ext === 'md') return '\uD83D\uDCDD';
-    if (ext === 'sql') return '\uD83D\uDDC3\uFE0F';
-    return '\uD83D\uDCCE';
-  };
-
-  const validateFile = (file: File): string | null => {
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    if (!ALL_EXTENSIONS.includes(ext)) {
-      return `지원하지 않는 파일 형식입니다 (.${ext})`;
-    }
-    const isBinary = [...EXCEL_EXTENSIONS, ...WORD_EXTENSIONS, ...PDF_EXTENSIONS].includes(ext);
-    const maxSize = isBinary ? MAX_FILE_SIZE_BINARY : MAX_FILE_SIZE_TEXT;
-    const maxLabel = isBinary ? '10MB' : '2MB';
-    if (file.size > maxSize) {
-      return `파일 크기가 ${maxLabel}를 초과합니다. (${(file.size / 1024 / 1024).toFixed(1)}MB)`;
-    }
-    return null;
-  };
-
   const handleWriteFileSelect = async (file: File | undefined) => {
     if (!file) return;
-    const validationError = validateFile(file);
-    if (validationError) { setError(validationError); return; }
-    setFileLoading(true);
-    setError('');
-    try {
-      const text = await parseFile(file);
-      if (!text.trim()) { setError('파일에서 텍스트를 추출할 수 없습니다.'); setFileLoading(false); return; }
-      setWriteFile(file);
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      const label = getFileTypeLabel(ext);
-      setWriteContext((prev) => prev ? prev + `\n\n--- 첨부파일 [${label}]: ${file.name} ---\n` + text : text);
-    } catch (err: any) {
-      setError(`파일 파싱 실패: ${err.message || '알 수 없는 오류'}`);
-    } finally {
-      setFileLoading(false);
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const textExtensions = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'rtf', 'tsv'];
+    if (!textExtensions.includes(ext)) {
+      setError(`지원하지 않는 파일 형식입니다 (${ext}). 텍스트 기반 파일만 가능합니다: ${textExtensions.join(', ')}`);
+      return;
     }
+    if (file.size > 1024 * 1024) { setError('파일 크기는 1MB 이하만 가능합니다.'); return; }
+    try {
+      const text = await readFileAsText(file);
+      setWriteFile(file);
+      setWriteContext((prev) => prev ? prev + '\n\n--- 첨부파일: ' + file.name + ' ---\n' + text : text);
+      setError('');
+    } catch { setError('파일을 읽을 수 없습니다.'); }
   };
 
   const handleAnalyzeFileSelect = async (file: File | undefined) => {
     if (!file) return;
-    const validationError = validateFile(file);
-    if (validationError) { setError(validationError); return; }
-    setFileLoading(true);
-    setError('');
-    try {
-      const text = await parseFile(file);
-      if (!text.trim()) { setError('파일에서 텍스트를 추출할 수 없습니다.'); setFileLoading(false); return; }
-      setAnalyzeFile(file);
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      const label = getFileTypeLabel(ext);
-      setAnalyzeContent((prev) => prev ? prev + `\n\n--- 첨부파일 [${label}]: ${file.name} ---\n` + text : text);
-    } catch (err: any) {
-      setError(`파일 파싱 실패: ${err.message || '알 수 없는 오류'}`);
-    } finally {
-      setFileLoading(false);
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const textExtensions = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'rtf', 'tsv'];
+    if (!textExtensions.includes(ext)) {
+      setError(`지원하지 않는 파일 형식입니다 (${ext}). 텍스트 기반 파일만 가능합니다: ${textExtensions.join(', ')}`);
+      return;
     }
+    if (file.size > 1024 * 1024) { setError('파일 크기는 1MB 이하만 가능합니다.'); return; }
+    try {
+      const text = await readFileAsText(file);
+      setAnalyzeFile(file);
+      setAnalyzeContent((prev) => prev ? prev + '\n\n--- 첨부파일: ' + file.name + ' ---\n' + text : text);
+      setError('');
+    } catch { setError('파일을 읽을 수 없습니다.'); }
   };
 
   const loadTemplates = async () => {
@@ -283,10 +212,37 @@ export default function AiDocsPage() {
     }
   };
 
-  useEffect(() => {
-    loadTemplates();
-    loadHistory();
-  }, []);
+  const loadAiFolder = async () => {
+    if (!dropboxStatus?.token_valid) {
+      alert('Dropbox 연결이 필요합니다.');
+      return;
+    }
+
+    setLoadingFolder(true);
+    try {
+      const response = await fetch(apiUrl('/api/v1/dropbox/list'), {
+        method: 'POST',
+        headers: authJsonHeaders(),
+        body: JSON.stringify({ path: '/AI업무폴더' }),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.status === 'success' && data.data) {
+        setAiFiles(
+          data.data.map((f: any) => ({
+            name: f.name || '',
+            path: f.path || '',
+            size: f.size || 0,
+            modified: f.modified || '',
+          }))
+        );
+      }
+    } catch (err) {
+      console.error('AI 폴더 조회 오류:', err);
+    } finally {
+      setLoadingFolder(false);
+    }
+  };
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -391,6 +347,64 @@ export default function AiDocsPage() {
     }
   };
 
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!keyword.trim()) return;
+
+    if (!dropboxStatus?.token_valid) {
+      alert('Dropbox 연결이 필요합니다.');
+      return;
+    }
+
+    setSearchLoading(true);
+    setError('');
+    setSearched(true);
+
+    try {
+      const response = await fetch(apiUrl('/api/v1/dropbox/search'), {
+        method: 'POST',
+        headers: authJsonHeaders(),
+        body: JSON.stringify({ query: keyword }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          const data = await response.json();
+          if (data.need_reauth) {
+            setError('드롭박스 재인증이 필요합니다.');
+            setDropboxStatus({ configured: true, token_valid: false });
+            return;
+          }
+        }
+        throw new Error('파일 검색 실패');
+      }
+
+      const data = await response.json();
+
+      if (data.status === 'success' && data.data) {
+        setSearchResults(
+          data.data.map((f: any) => ({
+            name: f.name || f.file_name || '',
+            path: f.path || f.file_path || '',
+            size: f.size || f.file_size || '',
+            modified: f.modified || '',
+          }))
+        );
+      } else {
+        setSearchResults([]);
+      }
+    } catch (err: any) {
+      setError(err.message || '검색에 실패했습니다.');
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const analyzeFromSearch = (fileName: string) => {
+    setAnalyzeContent(`파일명: ${fileName}\n\n[파일 내용을 붙여넣으세요]`);
+    setTab('analyze');
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text).then(() => {
       alert('클립보드에 복사되었습니다.');
@@ -402,10 +416,12 @@ export default function AiDocsPage() {
     setTab('rewrite');
   };
 
-  const formatSize = (size: number) => {
-    if (size < 1024) return `${size} B`;
-    if (size < 1048576) return `${(size / 1024).toFixed(1)} KB`;
-    return `${(size / 1048576).toFixed(1)} MB`;
+  const formatSize = (size: string | number) => {
+    const num = typeof size === 'string' ? parseInt(size) : size;
+    if (isNaN(num)) return size;
+    if (num < 1024) return `${num} B`;
+    if (num < 1048576) return `${(num / 1024).toFixed(1)} KB`;
+    return `${(num / 1048576).toFixed(1)} MB`;
   };
 
   const formatDate = (iso: string) => {
@@ -414,42 +430,88 @@ export default function AiDocsPage() {
     return d.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   };
 
+  const getDropboxStatusBadge = () => {
+    if (checkingStatus) {
+      return <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-xs font-medium rounded-full">확인 중...</span>;
+    }
+
+    if (!dropboxStatus?.configured) {
+      return <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-semibold rounded-full">❌ 미설정</span>;
+    }
+
+    if (dropboxStatus.token_valid) {
+      return <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full">✅ 연결됨</span>;
+    }
+
+    return <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-semibold rounded-full">⚠️ 재연결</span>;
+  };
+
   const tabs = [
-    { id: 'write' as Tab, label: '서류 작성', desc: 'AI 기반 문서 생성' },
-    { id: 'analyze' as Tab, label: '서류 분석', desc: '문서 정밀 분석' },
-    { id: 'rewrite' as Tab, label: '문서 수정', desc: '문서 개선/수정' },
+    { id: 'write' as Tab, label: '📝 작성', desc: 'AI 문서 생성' },
+    { id: 'analyze' as Tab, label: '📊 분석', desc: '정밀 분석' },
+    { id: 'rewrite' as Tab, label: '✏️ 수정', desc: '문서 개선' },
+    { id: 'search' as Tab, label: '🔍 검색', desc: 'Dropbox 검색' },
+    { id: 'folder' as Tab, label: '📁 폴더', desc: 'AI 업무폴더' },
   ];
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">AI 문서</h1>
-        <p className="text-slate-500 mt-1 text-sm">Claude AI 기반 고품질 비즈니스 문서 생성 및 분석</p>
+        <h1 className="text-2xl font-bold text-slate-900">AI 문서 & 파일 관리</h1>
+        <p className="text-slate-500 mt-1 text-sm">Claude AI + Dropbox 통합 문서 플랫폼</p>
       </div>
 
-      {/* AI Engine Info */}
-      <div className="bg-gradient-to-r from-slate-50 to-brand-50/50 rounded-2xl border border-slate-200 p-4 flex items-center gap-4">
-        <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-600 rounded-xl flex items-center justify-center shadow-sm shrink-0">
-          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-slate-800">Multi-AI Engine</div>
-          <div className="text-xs text-slate-500 mt-0.5">
-            <span className="text-blue-600 font-medium">Gemini Flash</span> &middot; <span className="text-purple-600 font-medium">Claude Haiku 4.5</span> &middot; <span className="text-emerald-600 font-medium">Claude Sonnet 4.5</span> &middot; 역할별 최적 AI 자동 배분 &middot; PDF, Excel, Word 첨부 지원
+      {/* AI Engine Info + Dropbox Status */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-gradient-to-r from-slate-50 to-brand-50/50 rounded-2xl border border-slate-200 p-4 flex items-center gap-4">
+          <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-600 rounded-xl flex items-center justify-center shadow-sm shrink-0">
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
           </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-slate-800">Claude AI Engine</div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              Claude Sonnet 4.5 &middot; 비즈니스 문서 전문가
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-2xl border border-blue-200 p-4 flex items-center gap-4">
+          <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 1.807L0 5.629l6 3.822 6-3.822L6 1.807zM18 1.807l-6 3.822 6 3.822 6-3.822-6-3.822zM0 13.274l6 3.822 6-3.822-6-3.822-6 3.822zm12 0l6 3.822 6-3.822-6-3.822-6 3.822zM6 20.85l6-3.822-6-3.822-6 3.822L6 20.85zm12 0l6-3.822-6-3.822-6 3.822 6 3.822z"/>
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold text-slate-800">Dropbox 연동</div>
+              {getDropboxStatusBadge()}
+            </div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              {dropboxStatus?.token_valid ? '파일 검색 & 저장 가능' : '연결이 필요합니다'}
+            </div>
+          </div>
+          {dropboxStatus?.configured && (
+            <button
+              onClick={connectDropbox}
+              disabled={connecting}
+              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition disabled:opacity-50 shrink-0"
+            >
+              {connecting ? '연결 중...' : dropboxStatus.token_valid ? '재연결' : '연결'}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-2 bg-white rounded-2xl border border-slate-200 p-1.5">
+      <div className="flex gap-2 bg-white rounded-2xl border border-slate-200 p-1.5 overflow-x-auto">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => { setTab(t.id); setError(''); }}
-            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
+            className={`flex-shrink-0 py-2.5 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
               tab === t.id
                 ? 'bg-slate-900 text-white shadow-sm'
                 : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
@@ -514,7 +576,7 @@ export default function AiDocsPage() {
                   <textarea
                     value={writeContext}
                     onChange={(e) => setWriteContext(e.target.value)}
-                    placeholder="문서에 포함할 내용, 메모, 핵심 사항을 입력하세요...&#10;&#10;예시:&#10;- 신규 거래처 A사 발주건 처리 지시&#10;- 담당자: 김대리, 기한: 이번 주 금요일&#10;- 주의사항: 결제조건 확인 필요"
+                    placeholder="문서에 포함할 내용, 메모, 핵심 사항을 입력하세요..."
                     rows={8}
                     required
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none resize-none"
@@ -526,72 +588,32 @@ export default function AiDocsPage() {
                   <input
                     ref={writeFileRef}
                     type="file"
-                    accept={ACCEPT_STRING}
+                    accept=".txt,.md,.csv,.json,.xml,.html,.htm,.log,.rtf,.tsv"
                     className="hidden"
                     onChange={(e) => handleWriteFileSelect(e.target.files?.[0])}
                   />
-                  <div
-                    onDrop={(e) => handleDrop(e, handleWriteFileSelect, setWriteDragOver)}
-                    onDragOver={(e) => handleDragOver(e, setWriteDragOver)}
-                    onDragLeave={(e) => handleDragLeave(e, setWriteDragOver)}
-                    onClick={() => !fileLoading && writeFileRef.current?.click()}
-                    className={`flex flex-col items-center gap-2 px-4 py-5 rounded-xl border-2 border-dashed text-sm transition-all duration-200 cursor-pointer ${
-                      writeDragOver
-                        ? 'border-brand-500 bg-brand-50 text-brand-600 scale-[1.01]'
-                        : fileLoading
-                        ? 'border-slate-200 bg-slate-50 text-slate-400 cursor-wait'
-                        : 'border-slate-300 text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50/50'
-                    }`}
+                  <button
+                    type="button"
+                    onClick={() => writeFileRef.current?.click()}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-slate-300 text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50/50 transition w-full justify-center"
                   >
-                    {fileLoading ? (
-                      <span className="flex items-center gap-2">
-                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                        파일 분석 중...
-                      </span>
-                    ) : writeDragOver ? (
-                      <>
-                        <svg className="w-8 h-8 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                        <span className="font-medium">여기에 파일을 놓으세요</span>
-                      </>
-                    ) : writeFile ? (
-                      <span className="flex items-center gap-1.5">
-                        <span className="text-lg">{getFileIcon(writeFile.name.split('.').pop()?.toLowerCase() || '')}</span>
-                        <span className="font-medium">{writeFile.name}</span>
-                        <span className="text-slate-400 text-xs">({(writeFile.size / 1024).toFixed(1)} KB)</span>
-                      </span>
-                    ) : (
-                      <>
-                        <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                        <span>파일을 드래그하거나 클릭하여 첨부</span>
-                        <span className="text-xs text-slate-400">PDF, Excel, Word, 텍스트 등 (최대 10MB)</span>
-                      </>
-                    )}
-                  </div>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    {writeFile ? writeFile.name : '파일 첨부 (txt, md, csv, json, xml, html)'}
+                  </button>
                   {writeFile && (
-                    <div className="flex items-center justify-end mt-1.5">
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-xs text-brand-600">{writeFile.name} ({(writeFile.size / 1024).toFixed(1)} KB)</span>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setWriteFile(null); if (writeFileRef.current) writeFileRef.current.value = ''; }}
+                        onClick={() => { setWriteFile(null); if (writeFileRef.current) writeFileRef.current.value = ''; }}
                         className="text-xs text-red-400 hover:text-red-600"
                       >
-                        첨부 삭제
+                        삭제
                       </button>
                     </div>
                   )}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {[
-                      { icon: '\uD83D\uDCD5', label: 'PDF', color: 'bg-red-50 text-red-600 border-red-100' },
-                      { icon: '\uD83D\uDCCA', label: 'Excel (xlsx/xls)', color: 'bg-green-50 text-green-600 border-green-100' },
-                      { icon: '\uD83D\uDCC4', label: 'Word (docx)', color: 'bg-blue-50 text-blue-600 border-blue-100' },
-                      { icon: '\uD83D\uDCDD', label: 'TXT/MD', color: 'bg-slate-50 text-slate-600 border-slate-200' },
-                      { icon: '\uD83D\uDCC8', label: 'CSV/TSV', color: 'bg-amber-50 text-amber-600 border-amber-100' },
-                      { icon: '\u2699\uFE0F', label: 'JSON/XML/YAML', color: 'bg-purple-50 text-purple-600 border-purple-100' },
-                    ].map((fmt) => (
-                      <span key={fmt.label} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-medium ${fmt.color}`}>
-                        <span>{fmt.icon}</span>{fmt.label}
-                      </span>
-                    ))}
-                  </div>
                 </div>
                 <button
                   type="submit"
@@ -674,7 +696,7 @@ export default function AiDocsPage() {
                   <textarea
                     value={analyzeContent}
                     onChange={(e) => setAnalyzeContent(e.target.value)}
-                    placeholder="분석할 문서의 내용을 여기에 붙여넣으세요...&#10;&#10;계약서, 견적서, 이메일, 보고서 등 어떤 문서든 분석 가능합니다."
+                    placeholder="분석할 문서의 내용을 여기에 붙여넣으세요..."
                     rows={10}
                     required
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none resize-none"
@@ -686,72 +708,32 @@ export default function AiDocsPage() {
                   <input
                     ref={analyzeFileRef}
                     type="file"
-                    accept={ACCEPT_STRING}
+                    accept=".txt,.md,.csv,.json,.xml,.html,.htm,.log,.rtf,.tsv"
                     className="hidden"
                     onChange={(e) => handleAnalyzeFileSelect(e.target.files?.[0])}
                   />
-                  <div
-                    onDrop={(e) => handleDrop(e, handleAnalyzeFileSelect, setAnalyzeDragOver)}
-                    onDragOver={(e) => handleDragOver(e, setAnalyzeDragOver)}
-                    onDragLeave={(e) => handleDragLeave(e, setAnalyzeDragOver)}
-                    onClick={() => !fileLoading && analyzeFileRef.current?.click()}
-                    className={`flex flex-col items-center gap-2 px-4 py-5 rounded-xl border-2 border-dashed text-sm transition-all duration-200 cursor-pointer ${
-                      analyzeDragOver
-                        ? 'border-brand-500 bg-brand-50 text-brand-600 scale-[1.01]'
-                        : fileLoading
-                        ? 'border-slate-200 bg-slate-50 text-slate-400 cursor-wait'
-                        : 'border-slate-300 text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50/50'
-                    }`}
+                  <button
+                    type="button"
+                    onClick={() => analyzeFileRef.current?.click()}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-slate-300 text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50/50 transition w-full justify-center"
                   >
-                    {fileLoading ? (
-                      <span className="flex items-center gap-2">
-                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                        파일 분석 중...
-                      </span>
-                    ) : analyzeDragOver ? (
-                      <>
-                        <svg className="w-8 h-8 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                        <span className="font-medium">여기에 파일을 놓으세요</span>
-                      </>
-                    ) : analyzeFile ? (
-                      <span className="flex items-center gap-1.5">
-                        <span className="text-lg">{getFileIcon(analyzeFile.name.split('.').pop()?.toLowerCase() || '')}</span>
-                        <span className="font-medium">{analyzeFile.name}</span>
-                        <span className="text-slate-400 text-xs">({(analyzeFile.size / 1024).toFixed(1)} KB)</span>
-                      </span>
-                    ) : (
-                      <>
-                        <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                        <span>파일을 드래그하거나 클릭하여 첨부</span>
-                        <span className="text-xs text-slate-400">PDF, Excel, Word, 텍스트 등 (최대 10MB)</span>
-                      </>
-                    )}
-                  </div>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    {analyzeFile ? analyzeFile.name : '파일 첨부 (txt, md, csv, json, xml, html)'}
+                  </button>
                   {analyzeFile && (
-                    <div className="flex items-center justify-end mt-1.5">
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-xs text-brand-600">{analyzeFile.name} ({(analyzeFile.size / 1024).toFixed(1)} KB)</span>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setAnalyzeFile(null); if (analyzeFileRef.current) analyzeFileRef.current.value = ''; }}
+                        onClick={() => { setAnalyzeFile(null); if (analyzeFileRef.current) analyzeFileRef.current.value = ''; }}
                         className="text-xs text-red-400 hover:text-red-600"
                       >
-                        첨부 삭제
+                        삭제
                       </button>
                     </div>
                   )}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {[
-                      { icon: '\uD83D\uDCD5', label: 'PDF', color: 'bg-red-50 text-red-600 border-red-100' },
-                      { icon: '\uD83D\uDCCA', label: 'Excel (xlsx/xls)', color: 'bg-green-50 text-green-600 border-green-100' },
-                      { icon: '\uD83D\uDCC4', label: 'Word (docx)', color: 'bg-blue-50 text-blue-600 border-blue-100' },
-                      { icon: '\uD83D\uDCDD', label: 'TXT/MD', color: 'bg-slate-50 text-slate-600 border-slate-200' },
-                      { icon: '\uD83D\uDCC8', label: 'CSV/TSV', color: 'bg-amber-50 text-amber-600 border-amber-100' },
-                      { icon: '\u2699\uFE0F', label: 'JSON/XML/YAML', color: 'bg-purple-50 text-purple-600 border-purple-100' },
-                    ].map((fmt) => (
-                      <span key={fmt.label} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-medium ${fmt.color}`}>
-                        <span>{fmt.icon}</span>{fmt.label}
-                      </span>
-                    ))}
-                  </div>
                 </div>
                 <button
                   type="submit"
@@ -804,7 +786,7 @@ export default function AiDocsPage() {
                   <textarea
                     value={rewriteContent}
                     onChange={(e) => setRewriteContent(e.target.value)}
-                    placeholder="수정할 문서의 내용을 여기에 입력하세요...&#10;&#10;AI가 생성한 문서나 기존 문서를 붙여넣을 수 있습니다."
+                    placeholder="수정할 문서의 내용을 여기에 입력하세요..."
                     rows={8}
                     required
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none resize-none"
@@ -818,7 +800,7 @@ export default function AiDocsPage() {
                   <textarea
                     value={rewriteInstructions}
                     onChange={(e) => setRewriteInstructions(e.target.value)}
-                    placeholder={'수정 방향을 자연어로 입력하세요...\n\n예시:\n- "더 격식있는 톤으로 변경"\n- "항목을 표로 정리"\n- "결론 부분 강화"\n- "영문 병기 추가"'}
+                    placeholder={'수정 방향을 자연어로 입력하세요...\n\n예시:\n- "더 격식있는 톤으로 변경"\n- "항목을 표로 정리"\n- "결론 부분 강화"'}
                     rows={4}
                     required
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-200 focus:outline-none resize-none"
@@ -870,66 +852,138 @@ export default function AiDocsPage() {
               )}
             </>
           )}
+
+          {/* ─── Search Tab ─── */}
+          {tab === 'search' && (
+            <>
+              <form onSubmit={handleSearch} className="bg-white rounded-2xl border border-slate-200 p-6">
+                <h3 className="text-base font-semibold text-slate-900 mb-4">Dropbox 파일 검색</h3>
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                    placeholder="검색어를 입력하세요 (예: 견적서, 계약서...)"
+                    className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 focus:outline-none"
+                    disabled={!dropboxStatus?.token_valid}
+                  />
+                  <button
+                    type="submit"
+                    disabled={searchLoading || !keyword.trim() || !dropboxStatus?.token_valid}
+                    className="px-6 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition disabled:opacity-50 shrink-0"
+                  >
+                    {searchLoading ? '검색 중...' : '검색'}
+                  </button>
+                </div>
+                {!dropboxStatus?.token_valid && (
+                  <div className="mt-3 text-xs text-amber-600 bg-amber-50 rounded-lg p-3 border border-amber-200">
+                    ⚠️ Dropbox 연결이 필요합니다. 상단의 "연결" 버튼을 클릭하세요.
+                  </div>
+                )}
+              </form>
+
+              {searched && (
+                <div className="bg-white rounded-2xl border border-slate-200 p-6">
+                  <h3 className="text-sm font-semibold text-slate-700 mb-3">
+                    검색 결과 ({searchResults.length}건)
+                  </h3>
+                  {searchResults.length > 0 ? (
+                    <div className="space-y-2">
+                      {searchResults.map((file, i) => (
+                        <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-brand-200 hover:bg-brand-50/30 transition">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-slate-900 truncate">{file.name}</div>
+                            <div className="text-xs text-slate-500 truncate mt-0.5">{file.path}</div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0 ml-4">
+                            <span className="text-xs text-slate-400">{formatSize(file.size)}</span>
+                            <button
+                              onClick={() => analyzeFromSearch(file.name)}
+                              className="px-3 py-1.5 rounded-xl bg-brand-50 text-brand-600 text-xs font-medium hover:bg-brand-100 transition"
+                            >
+                              AI 분석
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-slate-500">검색 결과가 없습니다.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ─── Folder Tab ─── */}
+          {tab === 'folder' && (
+            <>
+              <div className="bg-white rounded-2xl border border-slate-200 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-base font-semibold text-slate-900">AI 업무폴더</h3>
+                  <button
+                    onClick={loadAiFolder}
+                    disabled={loadingFolder || !dropboxStatus?.token_valid}
+                    className="px-4 py-2 rounded-xl bg-brand-50 text-brand-600 text-sm font-medium hover:bg-brand-100 transition disabled:opacity-50"
+                  >
+                    {loadingFolder ? '로딩 중...' : '새로고침'}
+                  </button>
+                </div>
+
+                {!dropboxStatus?.token_valid ? (
+                  <div className="text-center py-12">
+                    <div className="text-4xl mb-3">📁</div>
+                    <p className="text-sm text-slate-500">Dropbox 연결 후 AI 업무폴더를 확인할 수 있습니다.</p>
+                    <button
+                      onClick={connectDropbox}
+                      disabled={connecting}
+                      className="mt-4 px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
+                    >
+                      {connecting ? '연결 중...' : '지금 연결하기'}
+                    </button>
+                  </div>
+                ) : aiFiles.length > 0 ? (
+                  <div className="space-y-2">
+                    {aiFiles.map((file, i) => (
+                      <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-brand-200 hover:bg-brand-50/30 transition">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-slate-900 truncate">{file.name}</div>
+                          <div className="text-xs text-slate-400 mt-0.5">{formatSize(file.size)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <div className="text-4xl mb-3">📂</div>
+                    <p className="text-sm text-slate-500">AI 업무폴더가 비어있습니다.</p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Sidebar - 1 col */}
         <div className="space-y-6">
-          {/* Usage Guide */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3">사용 가이드</h3>
-            <div className="space-y-3 text-xs text-slate-600">
-              {tab === 'write' && (
-                <>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                    <span>문서 템플릿을 선택하세요</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                    <span>핵심 내용과 메모를 입력하세요</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                    <span>AI가 공식 문서를 자동 생성합니다</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">4</span>
-                    <span>결과를 복사하거나 수정 모드로 이동</span>
-                  </div>
-                </>
-              )}
-              {tab === 'analyze' && (
-                <>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                    <span>분석 유형을 선택하세요</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                    <span>분석할 문서를 붙여넣으세요</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                    <span>AI가 체계적으로 분석합니다</span>
-                  </div>
-                </>
-              )}
-              {tab === 'rewrite' && (
-                <>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                    <span>수정할 문서를 입력하세요</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                    <span>자연어로 수정 지시사항 작성</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-5 h-5 bg-brand-100 text-brand-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                    <span>AI가 지시에 따라 문서를 수정합니다</span>
-                  </div>
-                </>
-              )}
+          {/* Quick Actions */}
+          <div className="bg-gradient-to-br from-brand-50 to-cyan-50 rounded-2xl border border-brand-200 p-5">
+            <h3 className="text-sm font-semibold text-slate-900 mb-3">빠른 워크플로우</h3>
+            <div className="space-y-2 text-xs text-slate-600">
+              <div className="flex items-center gap-2">
+                <span className="text-brand-600">🔍</span>
+                <span>검색 → AI 분석 → 인사이트</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-brand-600">📝</span>
+                <span>작성 → 수정 → Dropbox 저장</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-brand-600">📁</span>
+                <span>폴더 → 다운로드 → 분석</span>
+              </div>
             </div>
           </div>
 

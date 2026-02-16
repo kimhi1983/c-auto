@@ -1,14 +1,18 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 interface FileResult {
   name: string;
   path: string;
-  size: number;
+  size: string;
   modified?: string;
-  is_folder?: boolean;
+}
+
+interface DropboxStatus {
+  configured: boolean;
+  token_valid: boolean;
 }
 
 export default function FilesPage() {
@@ -17,69 +21,109 @@ export default function FilesPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searched, setSearched] = useState(false);
-
-  // Dropbox 상태
-  const [dbxStatus, setDbxStatus] = useState<{ configured: boolean; token_valid: boolean } | null>(null);
-  const [dbxAuthUrl, setDbxAuthUrl] = useState('');
-  const [checkingDbx, setCheckingDbx] = useState(true);
-
-  // AI 업무폴더
   const [aiFiles, setAiFiles] = useState<FileResult[]>([]);
-  const [loadingAi, setLoadingAi] = useState(false);
-  const [aiPath, setAiPath] = useState('/AI업무폴더');
+  const [saving, setSaving] = useState<string | null>(null);
+  const [dropboxStatus, setDropboxStatus] = useState<DropboxStatus | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(true);
+  const [connecting, setConnecting] = useState(false);
 
-  // ─── Dropbox 상태 확인 ───
-  const checkDropboxStatus = useCallback(async () => {
-    setCheckingDbx(true);
-    try {
-      const res = await fetch(apiUrl('/api/v1/dropbox/status'));
-      const json = await res.json();
-      if (json.status === 'success') {
-        setDbxStatus(json.data);
-        if (json.data.token_valid) loadAiFolder();
-      }
-    } catch {}
-    finally { setCheckingDbx(false); }
+  useEffect(() => {
+    checkDropboxStatus();
   }, []);
 
-  useEffect(() => { checkDropboxStatus(); }, [checkDropboxStatus]);
-
-  // ─── Dropbox 인증 URL 가져오기 ───
-  const getAuthUrl = useCallback(async () => {
+  const checkDropboxStatus = async () => {
+    setCheckingStatus(true);
     try {
-      const res = await fetch(apiUrl('/api/v1/dropbox/auth-url'), { headers: authHeaders() });
-      const json = await res.json();
-      if (json.auth_url) {
-        setDbxAuthUrl(json.auth_url);
-        window.open(json.auth_url, '_blank', 'width=600,height=700');
+      const response = await fetch(apiUrl('/api/v1/dropbox/status'));
+      if (response.ok) {
+        const data = await response.json();
+        setDropboxStatus(data.data);
       }
-    } catch { setError('Dropbox 인증 URL을 가져올 수 없습니다.'); }
-  }, []);
+    } catch (err) {
+      console.error('드롭박스 상태 확인 오류:', err);
+    } finally {
+      setCheckingStatus(false);
+    }
+  };
 
-  // ─── 드롭박스 파일 검색 ───
+  const connectDropbox = async () => {
+    setConnecting(true);
+    try {
+      const response = await fetch(apiUrl('/api/v1/dropbox/auth-url'), {
+        headers: authHeaders(),
+      });
+      if (!response.ok) throw new Error('인증 URL 생성 실패');
+      const data = await response.json();
+
+      if (data.status === 'success' && data.auth_url) {
+        // 새 창에서 인증 진행
+        const authWindow = window.open(data.auth_url, '_blank', 'width=600,height=700');
+
+        // 인증 완료 후 상태 확인 (3초마다)
+        const checkInterval = setInterval(async () => {
+          if (authWindow && authWindow.closed) {
+            clearInterval(checkInterval);
+            await checkDropboxStatus();
+            setConnecting(false);
+          }
+        }, 3000);
+
+        // 최대 5분 후 타임아웃
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          setConnecting(false);
+        }, 300000);
+      }
+    } catch (err: any) {
+      alert(err.message || '드롭박스 연결에 실패했습니다.');
+      setConnecting(false);
+    }
+  };
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!keyword.trim()) return;
+
+    if (!dropboxStatus?.token_valid) {
+      alert('드롭박스 연결이 필요합니다.');
+      return;
+    }
 
     setLoading(true);
     setError('');
     setSearched(true);
 
     try {
-      const res = await fetch(apiUrl('/api/v1/dropbox/search'), {
+      const response = await fetch(apiUrl('/api/v1/dropbox/search'), {
         method: 'POST',
         headers: authJsonHeaders(),
-        body: JSON.stringify({ query: keyword.trim() }),
+        body: JSON.stringify({ query: keyword }),
       });
-      const json = await res.json();
 
-      if (json.status === 'success' && json.data) {
-        setResults(json.data);
-      } else if (json.need_reauth) {
-        setError('Dropbox 인증이 만료되었습니다. 아래 버튼으로 재인증해주세요.');
-        setDbxStatus({ configured: true, token_valid: false });
+      if (!response.ok) {
+        if (response.status === 401) {
+          const data = await response.json();
+          if (data.need_reauth) {
+            setError('드롭박스 재인증이 필요합니다.');
+            setDropboxStatus({ configured: true, token_valid: false });
+            return;
+          }
+        }
+        throw new Error('파일 검색 실패');
+      }
+
+      const data = await response.json();
+
+      if (data.status === 'success' && data.data) {
+        setResults(
+          data.data.map((f: any) => ({
+            name: f.name || f.file_name || '',
+            path: f.path || f.file_path || '',
+            size: f.size || f.file_size || '',
+            modified: f.modified || '',
+          }))
+        );
       } else {
-        setError(json.detail || json.message || '검색 실패');
         setResults([]);
       }
     } catch (err: any) {
@@ -89,119 +133,129 @@ export default function FilesPage() {
     }
   };
 
-  // ─── AI 업무폴더 조회 ───
-  const loadAiFolder = useCallback(async (path?: string) => {
-    const targetPath = path || aiPath;
-    setLoadingAi(true);
+  const saveToAiFolder = async (filePath: string) => {
+    setSaving(filePath);
     try {
-      const res = await fetch(apiUrl('/api/v1/dropbox/list'), {
+      const response = await fetch(apiUrl('/api/v1/files/save-to-ai-folder'), {
         method: 'POST',
         headers: authJsonHeaders(),
-        body: JSON.stringify({ path: targetPath }),
+        body: JSON.stringify({ file_path: filePath }),
       });
-      const json = await res.json();
-      if (json.status === 'success' && json.data) {
-        setAiFiles(json.data);
-        if (path) setAiPath(path);
-      } else if (json.need_reauth) {
-        setDbxStatus({ configured: true, token_valid: false });
+      if (!response.ok) throw new Error('저장 실패');
+      const data = await response.json();
+      if (data.status === 'success') {
+        alert('AI 업무폴더에 저장 완료!');
+        loadAiFolder();
       }
-    } catch {}
-    finally { setLoadingAi(false); }
-  }, [aiPath]);
+    } catch {
+      alert('저장에 실패했습니다.');
+    } finally {
+      setSaving(null);
+    }
+  };
 
-  // ─── 파일 다운로드 링크 ───
-  const openFile = useCallback(async (filePath: string) => {
+  const loadAiFolder = async () => {
+    if (!dropboxStatus?.token_valid) return;
+
     try {
-      const res = await fetch(apiUrl('/api/v1/dropbox/link'), {
+      const response = await fetch(apiUrl('/api/v1/dropbox/list'), {
         method: 'POST',
         headers: authJsonHeaders(),
-        body: JSON.stringify({ path: filePath }),
+        body: JSON.stringify({ path: '/AI업무폴더' }),
       });
-      const json = await res.json();
-      if (json.link) {
-        window.open(json.link, '_blank');
-      } else {
-        setError('다운로드 링크를 생성할 수 없습니다.');
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.status === 'success' && data.data) {
+        setAiFiles(
+          data.data.map((f: any) => ({
+            name: f.name || '',
+            path: f.path || '',
+            size: f.size || 0,
+            modified: f.modified || '',
+          }))
+        );
       }
-    } catch { setError('다운로드 실패'); }
-  }, []);
-
-  const formatSize = (size: number) => {
-    if (!size || size === 0) return '-';
-    if (size < 1024) return `${size} B`;
-    if (size < 1048576) return `${(size / 1024).toFixed(1)} KB`;
-    return `${(size / 1048576).toFixed(1)} MB`;
+    } catch {
+      // ignore
+    }
   };
 
-  const formatDate = (d?: string) => {
-    if (!d) return '';
-    try { return new Date(d).toLocaleDateString('ko-KR'); } catch { return d; }
+  const formatSize = (size: string | number) => {
+    const num = typeof size === 'string' ? parseInt(size) : size;
+    if (isNaN(num)) return size;
+    if (num < 1024) return `${num} B`;
+    if (num < 1048576) return `${(num / 1024).toFixed(1)} KB`;
+    return `${(num / 1048576).toFixed(1)} MB`;
   };
 
-  const isConnected = dbxStatus?.configured && dbxStatus?.token_valid;
+  const getDropboxStatusBadge = () => {
+    if (checkingStatus) {
+      return <span className="px-3 py-1 bg-slate-100 text-slate-500 text-xs font-medium rounded-full">확인 중...</span>;
+    }
+
+    if (!dropboxStatus?.configured) {
+      return <span className="px-3 py-1 bg-red-100 text-red-700 text-xs font-semibold rounded-full">❌ 설정 안됨</span>;
+    }
+
+    if (dropboxStatus.token_valid) {
+      return <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">✅ 연결됨</span>;
+    }
+
+    return <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-xs font-semibold rounded-full">⚠️ 재연결 필요</span>;
+  };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">파일 검색</h1>
-        <p className="text-slate-500 mt-1">드롭박스 파일 검색 및 AI 업무폴더 관리</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">파일 검색</h1>
+          <p className="text-slate-500 mt-1 text-sm">드롭박스 파일 검색 및 AI 업무폴더 관리</p>
+        </div>
       </div>
 
       {/* Dropbox 연결 상태 */}
-      {checkingDbx ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-slate-500">드롭박스 연결 확인 중...</span>
-        </div>
-      ) : !isConnected ? (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
-              <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+              <svg className="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6 1.807L0 5.629l6 3.822 6-3.822L6 1.807zM18 1.807l-6 3.822 6 3.822 6-3.822-6-3.822zM0 13.274l6 3.822 6-3.822-6-3.822-6 3.822zm12 0l6 3.822 6-3.822-6-3.822-6 3.822zM6 20.85l6-3.822-6-3.822-6 3.822L6 20.85zm12 0l6-3.822-6-3.822-6 3.822 6 3.822z"/>
               </svg>
             </div>
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-amber-800">
-                {dbxStatus?.configured ? 'Dropbox 인증이 만료되었습니다' : 'Dropbox가 연결되지 않았습니다'}
-              </h3>
-              <p className="text-xs text-amber-600 mt-0.5">
-                파일 검색을 사용하려면 Dropbox 인증이 필요합니다.
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">Dropbox 연동</h3>
+                {getDropboxStatusBadge()}
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {dropboxStatus?.token_valid
+                  ? 'Dropbox 파일 검색이 가능합니다.'
+                  : dropboxStatus?.configured
+                    ? 'Dropbox 인증이 만료되었습니다. 재연결해주세요.'
+                    : 'Dropbox 앱 키가 설정되지 않았습니다.'}
               </p>
             </div>
-            <button
-              onClick={getAuthUrl}
-              className="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition shrink-0"
-            >
-              {dbxStatus?.configured ? '재인증' : 'Dropbox 연결'}
-            </button>
           </div>
-          {dbxAuthUrl && (
-            <div className="mt-3 pt-3 border-t border-amber-200">
-              <p className="text-xs text-amber-600">
-                팝업이 차단된 경우:{' '}
-                <a href={dbxAuthUrl} target="_blank" rel="noopener noreferrer" className="underline font-medium">
-                  여기를 클릭
-                </a>
-                하여 인증한 후{' '}
-                <button onClick={checkDropboxStatus} className="underline font-medium">
-                  새로고침
-                </button>
-                해주세요.
-              </p>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={checkDropboxStatus}
+              disabled={checkingStatus}
+              className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 disabled:opacity-50 transition"
+            >
+              🔄 새로고침
+            </button>
+            {dropboxStatus?.configured && (
+              <button
+                onClick={connectDropbox}
+                disabled={connecting}
+                className="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
+              >
+                {connecting ? '연결 중...' : dropboxStatus.token_valid ? '재연결' : '연결하기'}
+              </button>
+            )}
+          </div>
         </div>
-      ) : (
-        <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-2.5 flex items-center gap-2">
-          <div className="w-2 h-2 bg-green-500 rounded-full" />
-          <span className="text-xs font-medium text-green-700">Dropbox 연결됨</span>
-          <button onClick={checkDropboxStatus} className="text-xs text-green-500 hover:text-green-700 ml-auto">
-            상태 확인
-          </button>
-        </div>
-      )}
+      </div>
 
       {/* Search Form */}
       <form onSubmit={handleSearch} className="flex gap-3">
@@ -209,13 +263,13 @@ export default function FilesPage() {
           type="text"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          placeholder="검색어를 입력하세요 (예: 견적서, 계약서, MSDS...)"
+          placeholder="검색어를 입력하세요 (예: 견적서, 계약서...)"
           className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 focus:outline-none"
-          disabled={!isConnected}
+          disabled={!dropboxStatus?.token_valid}
         />
         <button
           type="submit"
-          disabled={loading || !keyword.trim() || !isConnected}
+          disabled={loading || !keyword.trim() || !dropboxStatus?.token_valid}
           className="px-6 py-3 rounded-2xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition disabled:opacity-50 shrink-0"
         >
           {loading ? '검색 중...' : '검색'}
@@ -225,7 +279,6 @@ export default function FilesPage() {
       {error && (
         <div className="bg-red-50 text-red-700 px-4 py-3 rounded-2xl text-sm border border-red-200">
           {error}
-          <button onClick={() => setError('')} className="float-right text-red-400 hover:text-red-600">&times;</button>
         </div>
       )}
 
@@ -239,32 +292,19 @@ export default function FilesPage() {
             <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
               {results.map((file, i) => (
                 <div key={i} className="flex items-center justify-between p-4 hover:bg-slate-50 transition">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${file.is_folder ? 'bg-amber-50' : 'bg-blue-50'}`}>
-                      {file.is_folder ? (
-                        <svg className="w-4.5 h-4.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                      ) : (
-                        <svg className="w-4.5 h-4.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-900 truncate">{file.name}</div>
-                      <div className="text-xs text-slate-400 truncate mt-0.5">{file.path}</div>
-                    </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-900 truncate">{file.name}</div>
+                    <div className="text-xs text-slate-500 truncate mt-0.5">{file.path}</div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0 ml-4">
-                    <div className="text-right">
-                      <div className="text-xs text-slate-400">{formatSize(file.size)}</div>
-                      {file.modified && <div className="text-[10px] text-slate-300">{formatDate(file.modified)}</div>}
-                    </div>
-                    {!file.is_folder && (
-                      <button
-                        onClick={() => openFile(file.path)}
-                        className="px-3 py-1.5 rounded-xl bg-brand-50 text-brand-600 text-xs font-medium hover:bg-brand-100 transition"
-                      >
-                        다운로드
-                      </button>
-                    )}
+                    <span className="text-xs text-slate-400">{formatSize(file.size)}</span>
+                    <button
+                      onClick={() => saveToAiFolder(file.path)}
+                      disabled={saving === file.path}
+                      className="px-3 py-1.5 rounded-xl bg-brand-50 text-brand-600 text-xs font-medium hover:bg-brand-100 transition disabled:opacity-50"
+                    >
+                      {saving === file.path ? '저장 중...' : 'AI 폴더로 복사'}
+                    </button>
                   </div>
                 </div>
               ))}
@@ -277,69 +317,39 @@ export default function FilesPage() {
         </div>
       )}
 
-      {/* AI 업무폴더 */}
-      {isConnected && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-700">AI 업무폴더</h3>
-              {aiPath !== '/AI업무폴더' && (
-                <button
-                  onClick={() => loadAiFolder('/AI업무폴더')}
-                  className="text-xs text-slate-400 hover:text-slate-600"
-                >
-                  ← 상위 폴더
-                </button>
-              )}
-              <span className="text-xs text-slate-400">{aiPath}</span>
-            </div>
-            <button
-              onClick={() => loadAiFolder()}
-              disabled={loadingAi}
-              className="text-xs text-brand-600 hover:text-brand-700 font-medium disabled:opacity-50"
-            >
-              {loadingAi ? '로딩...' : '새로고침'}
-            </button>
-          </div>
-          {aiFiles.length > 0 ? (
-            <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
-              {aiFiles.map((file, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between p-4 hover:bg-slate-50 transition cursor-pointer"
-                  onClick={() => file.is_folder ? loadAiFolder(file.path) : openFile(file.path)}
-                >
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${file.is_folder ? 'bg-amber-50' : 'bg-blue-50'}`}>
-                      {file.is_folder ? (
-                        <svg className="w-4.5 h-4.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                      ) : (
-                        <svg className="w-4.5 h-4.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-900 truncate">{file.name}</div>
-                      {file.modified && <div className="text-xs text-slate-400 mt-0.5">{formatDate(file.modified)}</div>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-4">
-                    {!file.is_folder && <span className="text-xs text-slate-400">{formatSize(file.size)}</span>}
-                    {file.is_folder && (
-                      <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
-              <p className="text-sm text-slate-400">
-                {loadingAi ? '폴더 내용을 불러오는 중...' : 'AI 업무폴더가 비어있습니다.'}
-              </p>
-            </div>
-          )}
+      {/* AI Folder Contents */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-slate-700">AI 업무폴더</h3>
+          <button
+            onClick={loadAiFolder}
+            disabled={!dropboxStatus?.token_valid}
+            className="text-xs text-brand-600 hover:text-brand-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            새로고침
+          </button>
         </div>
-      )}
+        {aiFiles.length > 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
+            {aiFiles.map((file, i) => (
+              <div key={i} className="flex items-center justify-between p-4">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-slate-900 truncate">{file.name}</div>
+                  <div className="text-xs text-slate-400 mt-0.5">{formatSize(file.size)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
+            <p className="text-sm text-slate-400">
+              {dropboxStatus?.token_valid
+                ? 'AI 업무폴더가 비어있습니다. "새로고침"을 클릭하여 확인하세요.'
+                : 'Dropbox 연결 후 AI 업무폴더를 확인할 수 있습니다.'}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
