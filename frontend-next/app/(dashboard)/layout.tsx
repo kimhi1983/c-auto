@@ -18,7 +18,7 @@ const NAV_ITEMS = [
   { href: '/dashboard', label: '대시보드', icon: 'home' },
   { href: '/emails', label: '이메일', icon: 'mail' },
   { href: '/ai-docs', label: 'AI 문서', icon: 'sparkles' },
-  { href: '/archives', label: '아카이브', icon: 'archive' },
+  { href: '/archives', label: '리포트', icon: 'archive' },
   { href: '/inventory', label: '재고 관리', icon: 'box' },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
 ];
@@ -166,7 +166,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
               <div>
                 <span className="text-base font-bold text-slate-900 block leading-tight">C-Auto</span>
-                <span className="text-[10px] text-slate-400 font-medium">Smart Email Analysis</span>
               </div>
             </Link>
           ) : (

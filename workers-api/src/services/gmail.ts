@@ -370,6 +370,44 @@ export function parseGmailMessage(msg: GmailMessage): ParsedEmail {
   };
 }
 
+// ─── 첨부파일 다운로드 ───
+
+/**
+ * Gmail 첨부파일 내용 다운로드
+ * @returns base64url 인코딩된 파일 데이터
+ */
+export async function downloadGmailAttachment(
+  accessToken: string,
+  messageId: string,
+  attachmentId: string
+): Promise<{ data: string; size: number }> {
+  const res = await fetch(
+    `${GMAIL_API_BASE}/messages/${messageId}/attachments/${attachmentId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gmail attachment download failed: ${res.status} ${text}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * base64url → 표준 base64 변환 (AI API에서 사용)
+ */
+export function base64UrlToBase64(data: string): string {
+  return data.replace(/-/g, "+").replace(/_/g, "/");
+}
+
+/**
+ * base64url → UTF-8 텍스트 디코딩 (텍스트 파일용)
+ */
+export function decodeAttachmentToText(data: string): string {
+  return decodeBase64Url(data);
+}
+
 // ─── 헬퍼 ───
 
 export function isGmailConfigured(env: {

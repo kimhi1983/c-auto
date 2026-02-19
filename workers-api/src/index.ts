@@ -13,6 +13,8 @@ import aiDocs from './routes/ai-docs';
 import gmail from './routes/gmail';
 import dropbox from './routes/dropbox';
 import erp from './routes/erp';
+import marketReport from './routes/market-report';
+import aiRouter from './routes/ai';
 import { getAIEngineStatus } from './services/ai';
 import type { Env, UserContext } from './types';
 
@@ -55,6 +57,8 @@ app.route('/api/v1/ai-docs', aiDocs);
 app.route('/api/v1/gmail', gmail);
 app.route('/api/v1/dropbox', dropbox);
 app.route('/api/v1/erp', erp);
+app.route('/api/v1/market-report', marketReport);
+app.route('/api/v1/ai', aiRouter);
 
 // 상태 확인 라우트
 app.get('/api/status', (c) => {

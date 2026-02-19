@@ -3,6 +3,7 @@ AI Selector Module
 Claude와 Gemini 두 가지 AI 모델을 호출하는 헬퍼 함수
 """
 import os
+import json
 from typing import Optional
 from anthropic import Anthropic
 import google.generativeai as genai
@@ -86,13 +87,13 @@ def ask_claude_long(prompt: str, system: str = "", model: str = "claude-3-5-sonn
         return f"Claude 오류: {str(e)}"
 
 
-def ask_gemini(prompt: str, model: str = "gemini-1.5-flash") -> str:
+def ask_gemini(prompt: str, model: str = "gemini-2.0-flash") -> str:
     """
     Google Gemini 모델에 질문하고 응답 받기
 
     Args:
         prompt: 질문 내용
-        model: 사용할 모델 (기본값: gemini-1.5-flash - 빠르고 무료)
+        model: 사용할 모델 (기본값: gemini-2.0-flash - 최신 고속 모델)
 
     Returns:
         str: AI 응답 텍스트
@@ -116,3 +117,45 @@ def ask_gemini(prompt: str, model: str = "gemini-1.5-flash") -> str:
     except Exception as e:
         logger.error(f"Gemini API 호출 오류: {e}", exc_info=True)
         return f"Gemini 오류: {str(e)}"
+
+def ask_gemini_json(prompt: str, model: str = "gemini-2.0-flash") -> dict:
+    """
+    Gemini에게 질문하고 JSON 형식으로 응답 받기 (업무 데이터 추출용)
+
+    Args:
+        prompt: 질문 내용
+        model: 사용할 모델 (기본값: gemini-2.0-flash - 최신 고속 모델)
+
+    Returns:
+        dict: 파싱된 JSON 데이터
+    """
+    try:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            return {"error": "API 키 미설정"}
+
+        genai.configure(api_key=api_key)
+        
+        # JSON 출력을 강제하는 시스템 프롬프트 추가
+        full_prompt = (
+            f"{prompt}\n\n"
+            "Output MUST be a valid JSON object. Do not include markdown formatting like ```json."
+        )
+        
+        model_instance = genai.GenerativeModel(model)
+        # generation_config={"response_mime_type": "application/json"} 은 최신 버전에서 지원
+        response = model_instance.generate_content(full_prompt)
+        
+        text = response.text.strip()
+        # 마크다운 코드 블록 제거
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+            
+        return json.loads(text)
+    except Exception as e:
+        logger.error(f"Gemini JSON 파싱 오류: {e}", exc_info=True)
+        return {"error": str(e), "raw_text": text if 'text' in locals() else ""}

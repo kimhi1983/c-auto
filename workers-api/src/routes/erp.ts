@@ -15,6 +15,7 @@ import {
   getERPStatus,
   aggregateSales,
   aggregatePurchases,
+  type ProductItem,
 } from "../services/ecount";
 import { askAIAnalyze } from "../services/ai";
 import type { Env } from "../types";
@@ -205,10 +206,32 @@ erp.get("/inventory", async (c) => {
   }
 
   try {
-    const result = await getInventory(c.env);
+    // 재고현황 + 품목목록 동시 조회 (품목명 매핑용)
+    const [result, productsResult] = await Promise.all([
+      getInventory(c.env),
+      getProducts(c.env).catch(() => ({ items: [] as ProductItem[], totalCount: 0 })),
+    ]);
+
+    // 품목코드 → 품목정보 매핑
+    const productMap = new Map<string, ProductItem>();
+    for (const p of productsResult.items) {
+      productMap.set(p.PROD_CD, p);
+    }
+
+    // 재고 데이터에 품목명/단위 보강
+    const enrichedItems = result.items.map((inv: any) => {
+      const prod = productMap.get(inv.PROD_CD);
+      return {
+        ...inv,
+        PROD_DES: inv.PROD_DES || prod?.PROD_DES || inv.PROD_CD,
+        UNIT: inv.UNIT || prod?.UNIT || "",
+        BAL_QTY: String(inv.BAL_QTY ?? "0"),
+      };
+    });
+
     return c.json({
       status: "success",
-      data: { items: result.items, total_count: result.totalCount, api_error: result.error || null },
+      data: { items: enrichedItems, total_count: result.totalCount, api_error: result.error || null },
     });
   } catch (e: any) {
     console.error("[ERP] Inventory fetch error:", e);

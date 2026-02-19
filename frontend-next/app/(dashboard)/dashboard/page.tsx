@@ -266,6 +266,9 @@ export default function DashboardPage() {
                 <div className="text-xs text-slate-400 text-center pt-1">
                   {rates.updated_at ? `업데이트: ${new Date(rates.updated_at).toLocaleDateString('ko-KR')}` : ''}
                 </div>
+
+                {/* 환율 계산기 */}
+                <CurrencyCalculator rates={rates} />
               </div>
             ) : (
               <div className="text-sm text-slate-400 text-center py-8">환율 정보를 불러올 수 없습니다.</div>
@@ -356,6 +359,68 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CurrencyCalculator({ rates }: { rates: ExchangeRate }) {
+  const [amount, setAmount] = useState('');
+  const [from, setFrom] = useState('USD');
+  const [to, setTo] = useState('KRW');
+
+  const convert = (val: number, fromCur: string, toCur: string): number => {
+    if (fromCur === toCur) return val;
+    // 모든 통화를 KRW 기준으로 변환
+    const toKRW: Record<string, number> = { KRW: 1, USD: rates.USD_KRW, CNY: rates.CNY_KRW };
+    const krwAmount = val * toKRW[fromCur];
+    return krwAmount / toKRW[toCur];
+  };
+
+  const result = amount && !isNaN(Number(amount)) ? convert(Number(amount), from, to) : null;
+
+  const swap = () => { setFrom(to); setTo(from); };
+
+  const currencies = [
+    { code: 'USD', label: '달러 (USD)' },
+    { code: 'CNY', label: '위안 (CNY)' },
+    { code: 'KRW', label: '원화 (KRW)' },
+  ];
+
+  const formatResult = (val: number) => {
+    if (to === 'KRW') return Math.round(val).toLocaleString();
+    return val.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  };
+
+  return (
+    <div className="border-t border-slate-100 pt-4 mt-1">
+      <h4 className="text-sm font-bold text-slate-900 mb-3">환율 계산기</h4>
+      <div className="space-y-2.5">
+        <div className="flex gap-2">
+          <input
+            type="number"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="금액 입력"
+            className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-1 focus:ring-brand-300 focus:border-brand-400 outline-none"
+          />
+          <select value={from} onChange={(e) => setFrom(e.target.value)} className="px-2 py-2 border border-slate-200 rounded-lg text-sm bg-white">
+            {currencies.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center justify-center">
+          <button onClick={swap} className="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600 text-xs">
+            ↕ 전환
+          </button>
+        </div>
+        <div className="flex gap-2 items-center">
+          <div className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-900 min-h-[38px] flex items-center">
+            {result !== null ? formatResult(result) : <span className="text-slate-400 font-normal">결과</span>}
+          </div>
+          <select value={to} onChange={(e) => setTo(e.target.value)} className="px-2 py-2 border border-slate-200 rounded-lg text-sm bg-white">
+            {currencies.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
+          </select>
+        </div>
+      </div>
     </div>
   );
 }

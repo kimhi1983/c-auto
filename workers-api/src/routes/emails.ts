@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, desc, like, and, sql, count } from "drizzle-orm";
 import { emails, emailApprovals, emailAttachments } from "../db/schema";
 import { authMiddleware, requireApprover } from "../middleware/auth";
-import { classifyEmailAdvanced, askAIDraft, KPROS_EMAIL_SYSTEM_PROMPT } from "../services/ai";
+import { classifyEmailAdvanced, askAIDraft, analyzeAttachment, KPROS_EMAIL_SYSTEM_PROMPT } from "../services/ai";
 import {
   isGmailConfigured,
   getGmailAccessToken,
@@ -15,6 +15,8 @@ import {
   listGmailMessagesAll,
   getGmailMessage,
   parseGmailMessage,
+  downloadGmailAttachment,
+  base64UrlToBase64,
 } from "../services/gmail";
 import type { Env } from "../types";
 
@@ -193,6 +195,7 @@ emailsRouter.get("/:id", async (c) => {
         file_path: a.filePath,
         file_size: a.fileSize,
         content_type: a.contentType,
+        ai_analysis: a.aiAnalysis || null,
       })),
     },
   });
@@ -323,10 +326,12 @@ emailsRouter.post("/fetch", async (c) => {
         }
       }
 
-      // ── Phase 2: 백그라운드 AI 분류 (waitUntil) ──
+      // ── Phase 2: 백그라운드 AI 분류 + 첨부파일 분석 (waitUntil) ──
       if (saved.length > 0) {
         const aiTask = (async () => {
           const AI_BATCH = 5; // AI 호출 5개씩 병렬
+          const nonFilteringIds: number[] = []; // 첨부파일 분석 대상
+
           for (let i = 0; i < saved.length; i += AI_BATCH) {
             const aiBatch = saved.slice(i, i + AI_BATCH);
             await Promise.allSettled(
@@ -368,13 +373,18 @@ emailsRouter.post("/fetch", async (c) => {
                         aiConfidence: p.confidence || 0,
                       })
                       .where(eq(emails.id, item.id));
+
+                    // E(필터링) 제외한 이메일은 첨부파일 분석 대상
+                    if (category !== "필터링") {
+                      nonFilteringIds.push(item.id);
+                    }
                   }
                 } catch {
                   // AI 실패 시 기본 분류 유지
                   await db.update(emails)
                     .set({
                       aiSummary: JSON.stringify({
-                        code: "E", summary: item.subject, importance: "하",
+                        code: "D", summary: item.subject, importance: "하",
                         action_items: "", search_keywords: [], director_report: "",
                         needs_approval: false, company_name: "", sender_info: "",
                         estimated_revenue: "", note: "AI 분류 실패 - 수동 확인 필요",
@@ -386,9 +396,61 @@ emailsRouter.post("/fetch", async (c) => {
               })
             );
           }
+
+          // ── Phase 2b: 첨부파일 분석 (필터링 제외 이메일만) ──
+          if (nonFilteringIds.length > 0 && accessToken) {
+            for (const emailId of nonFilteringIds) {
+              try {
+                const attRows = await db
+                  .select()
+                  .from(emailAttachments)
+                  .where(eq(emailAttachments.emailId, emailId));
+
+                if (attRows.length === 0) continue;
+
+                // 해당 이메일의 Gmail ID 추출
+                const [emailRow] = await db
+                  .select({ externalId: emails.externalId })
+                  .from(emails)
+                  .where(eq(emails.id, emailId))
+                  .limit(1);
+                if (!emailRow?.externalId) continue;
+                const gmailMsgId = emailRow.externalId.replace("gmail-", "");
+
+                // 각 첨부파일 분석 (순차 - API 부하 방지)
+                for (const att of attRows) {
+                  if (!att.filePath || att.aiAnalysis) continue; // attachmentId 없거나 이미 분석됨
+                  if ((att.fileSize || 0) > 10 * 1024 * 1024) continue; // 10MB 초과 스킵
+
+                  try {
+                    const downloaded = await downloadGmailAttachment(accessToken, gmailMsgId, att.filePath);
+                    const base64Data = base64UrlToBase64(downloaded.data);
+
+                    const analysis = await analyzeAttachment(
+                      c.env,
+                      att.fileName,
+                      att.contentType || "application/octet-stream",
+                      base64Data
+                    );
+
+                    await db.update(emailAttachments)
+                      .set({ aiAnalysis: analysis })
+                      .where(eq(emailAttachments.id, att.id));
+                  } catch (e) {
+                    console.error(`[Attachment] Analysis failed for ${att.fileName}:`, e);
+                    await db.update(emailAttachments)
+                      .set({ aiAnalysis: `분석 실패: ${att.fileName}` })
+                      .where(eq(emailAttachments.id, att.id));
+                  }
+                }
+              } catch (e) {
+                console.error(`[Attachment] Email ${emailId} attachment analysis error:`, e);
+              }
+            }
+          }
         })();
 
-        // waitUntil: 응답 반환 후에도 AI 분류 계속 실행
+        // waitUntil: 응답 반환 후에도 AI 분류 + 첨부파일 분석 계속 실행
         c.executionCtx.waitUntil(aiTask);
       }
 
@@ -427,25 +489,14 @@ emailsRouter.post("/fetch", async (c) => {
     },
     {
       sender: "김태호 부장 <th.kim@startech.co.kr>",
-      subject: "[견적] 히알루론산 나트륨 외 3종 견적 요청",
-      body: "안녕하세요, 스타텍 김태호입니다.\n\n아래 품목에 대해 견적을 요청드립니다.\n\n1. 히알루론산 나트륨 50kg\n2. 나이아신아마이드 100kg\n3. 알란토인 30kg\n4. 판테놀 50kg\n\n납기: 2주 이내 희망\n결제조건: 월말 정산\n\n견적서 회신 부탁드립니다.",
-      category: "영업기회", priority: "high",
+      subject: "[발주] 히알루론산 나트륨 외 3종 발주 요청",
+      body: "안녕하세요, 스타텍 김태호입니다.\n\n아래 품목에 대해 발주를 요청드립니다.\n\n1. 히알루론산 나트륨 50kg\n2. 나이아신아마이드 100kg\n3. 알란토인 30kg\n4. 판테놀 50kg\n\n납기: 2주 이내 희망\n결제조건: 월말 정산\n\n발주서 첨부하오니 확인 부탁드립니다.",
+      category: "발주내역", priority: "high",
       sampleAttachments: [
         { fileName: "스타텍_발주서_2025.xlsx", fileSize: 45200, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
       ],
-      aiSummary: JSON.stringify({ code: "B", summary: "스타텍에서 히알루론산 외 3종 총 4품목 견적 요청 (230kg)", importance: "상", action_items: "이사님께 단가 확인 요청 후 견적서 작성 발송 예정", search_keywords: [], director_report: "스타텍 김태호 부장, 4품목 230kg 견적 요청. 예상 매출 약 800만원. 우선 접수 확인 발송, 견적서는 이사님 단가 확인 후 발송.", needs_approval: true, company_name: "스타텍", sender_info: "김태호 (부장)", estimated_revenue: "약 800만원", note: "신규 대량 거래 기회" }),
-      draftReply: "안녕하세요, KPROS입니다.\n\n견적 문의해 주셔서 감사합니다.\n\n요청하신 4개 품목(히알루론산 나트륨, 나이아신아마이드, 알란토인, 판테놀)에 대해 확인 후 상세 견적서를 보내드리겠습니다.\n\n영업일 기준 1~2일 이내 안내 가능하오니 양해 부탁드립니다.\n\n추가로 확인이 필요한 사항이 있으시면 말씀해 주세요.\n감사합니다.\n\nKPROS 드림",
-    },
-    {
-      sender: "이수민 과장 <sm.lee@globalcomm.kr>",
-      subject: "미팅 요청 - 2025년 공급 계약 논의",
-      body: "안녕하세요, 글로벌커뮤니케이션 이수민입니다.\n\n2025년 원료 공급 계약 관련하여 미팅을 요청드립니다.\n\n일시: 2월 25일(화) 오후 2시 또는 2월 26일(수) 오전 10시\n장소: KPROS 본사 또는 화상회의\n안건: 연간 공급량 및 단가 협의\n\n참석 가능 여부 회신 부탁드립니다.",
-      category: "스케줄링", priority: "medium",
-      sampleAttachments: [
-        { fileName: "미팅안건_2025공급계약.pdf", fileSize: 128500, contentType: "application/pdf" },
-      ],
-      aiSummary: JSON.stringify({ code: "C", summary: "글로벌커뮤니케이션에서 2025년 공급 계약 미팅 요청 (2/25 또는 2/26)", importance: "중", action_items: "이사님 일정 확인 후 수락/대안 답변 발송", search_keywords: [], director_report: "글로벌커뮤니케이션 이수민 과장, 연간 공급 계약 미팅 제안. 2/25 오후2시 또는 2/26 오전10시. 이사님 일정 확인 필요.", needs_approval: true, company_name: "글로벌커뮤니케이션", sender_info: "이수민 (과장)", estimated_revenue: "", note: "" }),
-      draftReply: "안녕하세요, KPROS입니다.\n\n미팅 제안 감사합니다.\n말씀하신 2월 25일(화) 오후 2시에 일정이 가능하여, 해당 시간으로 확정하겠습니다.\n\n미팅 전 준비해야 할 자료가 있으시면 사전에 공유 부탁드립니다.\n당일 뵙겠습니다.\n\n감사합니다.\nKPROS 드림",
+      aiSummary: JSON.stringify({ code: "B", summary: "스타텍에서 히알루론산 외 3종 총 4품목 발주 요청 (230kg)", importance: "상", action_items: "1. ERP 재고 확인\n2. 이사님께 단가 확인\n3. 납기 확인 후 발주 접수", search_keywords: [], director_report: "스타텍 김태호 부장, 4품목 230kg 발주. 예상 매출 약 800만원. ERP 재고 확인 후 접수 처리 필요.", needs_approval: true, company_name: "스타텍", sender_info: "김태호 (부장)", estimated_revenue: "약 800만원", note: "대량 발주 건" }),
+      draftReply: "안녕하세요, KPROS입니다.\n\n발주서 접수 확인하였습니다.\n\n요청하신 4개 품목(히알루론산 나트륨, 나이아신아마이드, 알란토인, 판테놀)에 대해 재고 및 납기를 확인 후 안내드리겠습니다.\n\n영업일 기준 1~2일 이내 안내 가능하오니 양해 부탁드립니다.\n\n추가로 확인이 필요한 사항이 있으시면 말씀해 주세요.\n감사합니다.\n\nKPROS 드림",
     },
     {
       sender: "원료팀 <materials@globalchem.co.kr>",
@@ -456,7 +507,7 @@ emailsRouter.post("/fetch", async (c) => {
         { fileName: "단가변동_통지서_2025Q2.pdf", fileSize: 95300, contentType: "application/pdf" },
         { fileName: "원료시황_리포트_202502.xlsx", fileSize: 234100, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
       ],
-      aiSummary: JSON.stringify({ code: "D", summary: "글로벌케미칼에서 히알루론산 나트륨 8% 단가 인상 통보 (4/1 적용)", importance: "상", action_items: "2차 공급사 단가 비교 + 현재 단가 재고 확보 검토", search_keywords: [], director_report: "히알루론산 나트륨 8% 인상(₩45,000→₩48,600), 4/1 적용. 주력 세럼 원가 약 3.2% 상승 예상. 대체 공급사 검토 권장.", needs_approval: false, company_name: "글로벌케미칼", sender_info: "원료팀", estimated_revenue: "", note: "원가 영향 분석 필요" }),
+      aiSummary: JSON.stringify({ code: "C", summary: "글로벌케미칼에서 히알루론산 나트륨 8% 단가 인상 통보 (4/1 적용)", importance: "상", action_items: "2차 공급사 단가 비교 + 현재 단가 재고 확보 검토", search_keywords: [], director_report: "히알루론산 나트륨 8% 인상(₩45,000→₩48,600), 4/1 적용. 주력 세럼 원가 약 3.2% 상승 예상. 대체 공급사 검토 권장.", needs_approval: false, company_name: "글로벌케미칼", sender_info: "원료팀", estimated_revenue: "", note: "원가 영향 분석 필요" }),
       draftReply: "",
     },
     {
@@ -465,7 +516,7 @@ emailsRouter.post("/fetch", async (c) => {
       body: "귀사의 매출 200% 성장을 약속합니다!\n\n지금 바로 무료 상담을 받아보세요.\n\n☎ 1588-XXXX\n\n수신거부: reply STOP",
       category: "필터링", priority: "low",
       sampleAttachments: [],
-      aiSummary: JSON.stringify({ code: "E", summary: "스팸 광고 메일 - 마케팅 컨설팅 제안", importance: "하", action_items: "응대 불필요", search_keywords: [], director_report: "", needs_approval: false, company_name: "", sender_info: "", estimated_revenue: "", note: "스팸" }),
+      aiSummary: JSON.stringify({ code: "D", summary: "스팸 광고 메일 - 마케팅 컨설팅 제안", importance: "하", action_items: "응대 불필요", search_keywords: [], director_report: "", needs_approval: false, company_name: "", sender_info: "", estimated_revenue: "", note: "스팸" }),
       draftReply: "",
     },
   ];
@@ -763,8 +814,7 @@ emailsRouter.post("/:id/generate-draft", async (c) => {
 
 카테고리별 답변 규칙:
 - 자료대응: "요청하신 자료를 첨부하여 드립니다." 포함
-- 영업기회: "문의해 주셔서 감사합니다. 검토 후 상세 견적서를 보내드리겠습니다." 포함
-- 스케줄링: 수락 버전으로 작성
+- 발주내역: "발주서 접수 확인하였습니다. 재고 및 납기 확인 후 안내드리겠습니다." 포함
 - 정보수집/필터링: "답변이 필요하지 않은 메일입니다."로 간략히
 
 [답신 안전 규칙 - 반드시 준수]
@@ -928,6 +978,105 @@ emailsRouter.post("/refetch-bodies", async (c) => {
   } catch (err: any) {
     return c.json({ status: "error", detail: `본문 재동기화 실패: ${err.message}` }, 500);
   }
+});
+
+/**
+ * POST /emails/:id/analyze-attachments - 첨부파일 AI 분석 (수동 트리거)
+ * Gmail에서 첨부파일 다운로드 후 AI 분석 실행
+ */
+emailsRouter.post("/:id/analyze-attachments", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+
+  const [email] = await db
+    .select()
+    .from(emails)
+    .where(eq(emails.id, id))
+    .limit(1);
+
+  if (!email) {
+    return c.json({ detail: "이메일을 찾을 수 없습니다" }, 404);
+  }
+
+  const attRows = await db
+    .select()
+    .from(emailAttachments)
+    .where(eq(emailAttachments.emailId, id));
+
+  if (attRows.length === 0) {
+    return c.json({ status: "success", message: "첨부파일이 없습니다", analyzed: 0 });
+  }
+
+  // Gmail 첨부파일인 경우만 다운로드 가능
+  const gmailMsgId = email.externalId?.replace("gmail-", "");
+  let accessToken: string | null = null;
+
+  if (gmailMsgId && isGmailConfigured(c.env)) {
+    accessToken = await getGmailAccessToken(
+      c.env.CACHE!,
+      c.env.GMAIL_CLIENT_ID!,
+      c.env.GMAIL_CLIENT_SECRET!
+    );
+  }
+
+  let analyzed = 0;
+  let failed = 0;
+  const results: Array<{ file_name: string; status: string }> = [];
+
+  for (const att of attRows) {
+    try {
+      // attachmentId가 있고 Gmail 접근 가능하면 다운로드
+      if (att.filePath && accessToken && gmailMsgId) {
+        if ((att.fileSize || 0) > 10 * 1024 * 1024) {
+          results.push({ file_name: att.fileName, status: "skipped (10MB 초과)" });
+          continue;
+        }
+
+        const downloaded = await downloadGmailAttachment(accessToken, gmailMsgId, att.filePath);
+        const base64Data = base64UrlToBase64(downloaded.data);
+
+        const analysis = await analyzeAttachment(
+          c.env,
+          att.fileName,
+          att.contentType || "application/octet-stream",
+          base64Data
+        );
+
+        await db.update(emailAttachments)
+          .set({ aiAnalysis: analysis })
+          .where(eq(emailAttachments.id, att.id));
+
+        results.push({ file_name: att.fileName, status: "analyzed" });
+        analyzed++;
+      } else {
+        // attachmentId 없으면 파일명 기반 분석
+        const analysis = await analyzeAttachment(
+          c.env,
+          att.fileName,
+          att.contentType || "application/octet-stream",
+          ""
+        );
+
+        await db.update(emailAttachments)
+          .set({ aiAnalysis: analysis })
+          .where(eq(emailAttachments.id, att.id));
+
+        results.push({ file_name: att.fileName, status: "analyzed (metadata only)" });
+        analyzed++;
+      }
+    } catch (err: any) {
+      failed++;
+      results.push({ file_name: att.fileName, status: `failed: ${err.message}` });
+    }
+  }
+
+  return c.json({
+    status: "success",
+    message: `첨부파일 분석 완료: ${analyzed}건 성공, ${failed}건 실패`,
+    analyzed,
+    failed,
+    results,
+  });
 });
 
 export default emailsRouter;

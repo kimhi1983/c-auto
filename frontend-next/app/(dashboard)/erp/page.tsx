@@ -377,6 +377,18 @@ export default function ERPPage() {
     }
   }, [statusChecked, erpStatus, products.length, productsLoading, fetchProducts]);
 
+  // 탭 전환 시 데이터 자동 조회
+  useEffect(() => {
+    if (!statusChecked || !erpStatus?.erp_connected) return;
+    if (activeTab === 'inventory' && inventoryItems.length === 0 && !inventoryLoading) {
+      fetchInventory();
+    } else if (activeTab === 'sales' && !salesData && !salesLoading) {
+      fetchSales();
+    } else if (activeTab === 'purchases' && !purchasesData && !purchasesLoading) {
+      fetchPurchases();
+    }
+  }, [activeTab, statusChecked, erpStatus]);
+
   // 필터링된 품목
   const filteredProducts = productSearch
     ? products.filter(
@@ -713,18 +725,15 @@ export default function ERPPage() {
                   )
                 : inventoryItems;
               const totalBalQty = filtered.reduce((sum, i) => sum + parseFloat(i.BAL_QTY || '0'), 0);
-              const totalBalAmt = filtered.reduce((sum, i) => sum + parseFloat(i.BAL_AMT || '0'), 0);
+              const positiveCount = filtered.filter((i) => parseFloat(i.BAL_QTY || '0') > 0).length;
+              const negativeCount = filtered.filter((i) => parseFloat(i.BAL_QTY || '0') < 0).length;
               return (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <StatCard label="재고 품목 수" value={`${formatNumber(filtered.length)}개`} color="blue" />
-                    <StatCard label="총 재고수량" value={formatNumber(totalBalQty)} color="green" />
-                    <StatCard label="총 재고금액" value={`₩${formatKRW(totalBalAmt)}`} color="indigo" />
-                    <StatCard
-                      label="재고 있는 품목"
-                      value={`${filtered.filter((i) => parseFloat(i.BAL_QTY || '0') > 0).length}개`}
-                      color="amber"
-                    />
+                    <StatCard label="재고 있는 품목" value={`${positiveCount}개`} color="green" />
+                    <StatCard label="마이너스 재고" value={`${negativeCount}개`} color="red" />
+                    <StatCard label="총 재고수량 합계" value={formatNumber(totalBalQty)} color="indigo" />
                   </div>
 
                   <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -736,32 +745,22 @@ export default function ERPPage() {
                             <th className="py-3 px-4 font-semibold">품목코드</th>
                             <th className="py-3 px-4 font-semibold">품목명</th>
                             <th className="py-3 px-4 font-semibold">단위</th>
-                            <th className="py-3 px-4 font-semibold">창고</th>
-                            <th className="py-3 px-4 font-semibold text-right">입고수량</th>
-                            <th className="py-3 px-4 font-semibold text-right">출고수량</th>
                             <th className="py-3 px-4 font-semibold text-right">재고수량</th>
-                            <th className="py-3 px-4 font-semibold text-right">재고금액</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {filtered.slice(0, 100).map((item, i) => {
+                          {filtered.slice(0, 200).map((item, i) => {
                             const balQty = parseFloat(item.BAL_QTY || '0');
                             return (
-                              <tr key={`${item.PROD_CD}-${item.WH_CD || ''}-${i}`} className="border-b border-slate-100 hover:bg-slate-50 transition">
+                              <tr key={`${item.PROD_CD}-${i}`} className="border-b border-slate-100 hover:bg-slate-50 transition">
                                 <td className="py-2.5 px-4 text-slate-400 text-xs">{i + 1}</td>
                                 <td className="py-2.5 px-4">
                                   <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">{item.PROD_CD}</code>
                                 </td>
-                                <td className="py-2.5 px-4 font-medium text-slate-900">{item.PROD_DES}</td>
+                                <td className="py-2.5 px-4 font-medium text-slate-900">{item.PROD_DES || '-'}</td>
                                 <td className="py-2.5 px-4 text-slate-600">{item.UNIT || '-'}</td>
-                                <td className="py-2.5 px-4 text-slate-500 text-xs">{item.WH_DES || item.WH_CD || '-'}</td>
-                                <td className="py-2.5 px-4 text-right text-blue-600">{item.IN_QTY ? formatNumber(parseFloat(item.IN_QTY)) : '-'}</td>
-                                <td className="py-2.5 px-4 text-right text-red-500">{item.OUT_QTY ? formatNumber(parseFloat(item.OUT_QTY)) : '-'}</td>
                                 <td className={`py-2.5 px-4 text-right font-bold ${balQty > 0 ? 'text-slate-900' : balQty < 0 ? 'text-red-600' : 'text-slate-400'}`}>
                                   {formatNumber(balQty)}
-                                </td>
-                                <td className="py-2.5 px-4 text-right font-medium text-slate-700">
-                                  {item.BAL_AMT ? `₩${parseFloat(item.BAL_AMT).toLocaleString()}` : '-'}
                                 </td>
                               </tr>
                             );
@@ -769,9 +768,9 @@ export default function ERPPage() {
                         </tbody>
                       </table>
                     </div>
-                    {filtered.length > 100 && (
+                    {filtered.length > 200 && (
                       <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 text-center text-xs text-slate-500">
-                        {filtered.length}개 중 100개 표시
+                        {filtered.length}개 중 200개 표시 (검색으로 범위를 좁혀주세요)
                       </div>
                     )}
                   </div>

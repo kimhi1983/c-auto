@@ -410,7 +410,7 @@ export async function getInventoryByWarehouseItem(
 export async function getProducts(
   env: Env,
   pageNum = 1,
-  perPage = 100
+  perPage = 1000
 ): Promise<{ items: ProductItem[]; totalCount: number }> {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const data = await apiCall(env, "/OAPI/V2/InventoryBasic/GetBasicProductsList", {

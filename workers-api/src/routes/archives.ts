@@ -425,8 +425,8 @@ archives.post("/generate-report", async (c) => {
 
       aiInsight = await askAIAnalyze(
         c.env,
-        `다음은 KPROS의 ${typeLabel} 이메일 현황입니다. 이사님을 위한 3줄 핵심 요약과 이번 주 주의해야 할 사항을 간결하게 작성하세요.\n\n${summaryData}`,
-        "당신은 KPROS(화장품 원료 전문기업) 경영 보고서 작성 전문가입니다. 이사님께 보고하는 톤으로, 핵심만 간결하게 작성합니다.",
+        `다음은 KPROS의 ${typeLabel} 이메일 현황입니다. 3줄 핵심 요약과 주의해야 할 사항을 간결하게 작성하세요. 인사말이나 호칭 없이 바로 본론으로 시작하세요.\n\n${summaryData}`,
+        "당신은 KPROS(화장품 원료 전문기업) 경영 보고서 작성 전문가입니다. 인사말이나 호칭(이사님께 등) 없이 핵심만 간결하게 작성합니다.",
         1024
       );
     } catch (e) {

@@ -61,6 +61,98 @@ async function callGemini(
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
+// ─── Provider: Gemini Flash (Multimodal) ───
+
+/**
+ * Gemini 멀티모달 호출 - PDF, 이미지 등 파일 분석
+ */
+async function callGeminiMultimodal(
+  apiKey: string,
+  prompt: string,
+  fileBase64: string,
+  mimeType: string,
+  systemPrompt?: string,
+  maxTokens = 2048
+): Promise<string> {
+  const body: Record<string, unknown> = {
+    contents: [{
+      parts: [
+        { text: prompt },
+        { inline_data: { mime_type: mimeType, data: fileBase64 } },
+      ],
+    }],
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      temperature: 0.2,
+    },
+  };
+
+  if (systemPrompt) {
+    body.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini Multimodal API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as any;
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// ─── Provider: Gemini Flash (with Google Search Grounding) ───
+
+/**
+ * Gemini + Google Search로 실시간 웹 데이터 기반 응답
+ */
+async function callGeminiWithSearch(
+  apiKey: string,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 4096
+): Promise<string> {
+  const body: Record<string, unknown> = {
+    contents: [{ parts: [{ text: prompt }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      temperature: 0.2,
+    },
+  };
+
+  if (systemPrompt) {
+    body.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini Search API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as any;
+  // Search-grounded responses may have multiple parts
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map((p: any) => p.text || "").join("");
+}
+
 // ─── Provider: Claude (Anthropic) ───
 
 async function callClaude(
@@ -224,26 +316,34 @@ export const KPROS_EMAIL_SYSTEM_PROMPT = `당신은 KPROS(화장품 원료 전�
 3. 이사님께 보고할 때는 핵심만 간결하게 전달합니다.
 4. 판단이 어려운 건은 needs_approval을 true로 설정합니다.
 
-[메일 분류 카테고리 (5종)]
-A: 자료대응 - 카탈로그, MSDS, CoA, 인증서, 사양서 등 파일 요청
-B: 영업기회 - 견적, 발주, 단가 문의, 구매 의사
-C: 스케줄링 - 미팅 요청, 일정 조율, 방문 제안
-D: 정보수집 - 원료 단가 변동, 시장 동향, 뉴스레터, 공지
-E: 필터링 - 스팸, 광고, 업무 무관 메일
+[메일 분류 카테고리 (5종)] - 엄격한 우선순위 적용
+A: 자료대응 - COA, MSDS, 성적서, 카탈로그, 인증서, 사양서, 규격서 등 기술 자료 요청
+B: 영업기획 - 신규 발주(PO), 견적 문의, 재고 확인, 단가 협의, 구매 의사 건
+C: 스케줄링 - 물류 입고 일정, 미팅 예약, 수입 스케줄, 배송 추적, 일정 조율 건
+D: 정보수집 - 업무 관련 원료 단가 뉴스, 시장 동향, 업계 뉴스레터, 공지사항 (단, 광고성 박람회/세미나 초대는 E)
+E: 필터링 - 단순 광고, 박람회 초대, 세미나 홍보, 스팸, 내부 시스템 알림, 업무 무관 메일 건
+
+[엄격한 우선순위 규칙] - 반드시 순서대로 적용
+1. 서류 요청(COA, MSDS 등) → 무조건 A
+2. 발주/견적/구매 의사 → 무조건 B
+3. 일정/미팅/물류 날짜 → 무조건 C
+4. "[광고]" 태그 또는 박람회/세미나/이벤트 초대 → 무조건 E (D가 아님!)
+5. 시장정보/뉴스/공지 (광고 아님) → D
+6. 위 5개에 해당 안되면 → E
 
 [카테고리 판별 키워드]
-A: "카탈로그","MSDS","인증서","CoA","사양서","자료 요청","파일 부탁","보내주세요","전달 부탁","첨부","규격서"
-B: "견적","단가","가격","발주","주문","구매","MOQ","납기","수량","리드타임","quote","PO"
-C: "미팅","회의","방문","일정","시간","면담","화상회의","줌","Zoom","Teams","스케줄"
-D: "단가 인상","가격 변동","시장 동향","뉴스레터","공지","안내","통보","시황","트렌드"
-E: 위 A~D에 해당하지 않으며 대량발송 형식이거나 업무와 무관한 내용
+A: "COA","MSDS","성적서","인증서","카탈로그","사양서","규격서","자료 요청","파일 부탁","보내주세요","전달 부탁","첨부"
+B: "견적","단가","가격","발주","주문","구매","MOQ","납기","수량","리드타임","quote","PO","발주서","주문서","오더"
+C: "수입 스케줄","입고 일정","배송 추적","미팅","회의","일정","방문","예약","조율","언제","몇시"
+D: "단가 인상","가격 변동","시장 동향","뉴스레터","공지","안내","통보","시황","트렌드" (광고/박람회 제외)
+E: "[광고]","박람회","세미나","전시회","이벤트","초대","참가 안내", 또는 업무 무관 메일
 
-[복합 판별] 복수 카테고리 요소 시 비즈니스 가치 우선: B > C > A > D > E. note에 복합 분류 표시.
+[복합 판별] 복수 카테고리 요소 시 비즈니스 가치 우선: B > A > C > D > E. note에 복합 분류 표시.
 
 [카테고리별 처리 규칙]
 ■ A: 요청 자료/제품명 추출, 드롭박스 검색 키워드(한글/영문) 생성, 답변 필수문구 "요청하신 자료를 첨부하여 드립니다."
 ■ B: 품목/수량/납기 테이블 추출, 중요도 평가(상:500만+/중:일반/하:소량), 답변톤 적극적 영업, AI가 단가 직접 기재 금지, 필수문구 "문의해 주셔서 감사합니다. 검토 후 상세 견적서를 보내드리겠습니다."
-■ C: 미팅 목적/일시/방식/장소 추출, 수락 버전 답변 작성
+■ C: 일정/장소/참석자 정보 추출, 캘린더 등록 키워드 생성, 필요 시 일정 조율 답변 작성
 ■ D: 원료명/변동유형/변동폭/적용시점 추출, 원가 영향 1줄 분석, 외부 답변 불필요
 ■ E: 응대 없음, 1줄 기록만
 
@@ -272,7 +372,7 @@ ${(body || '(본문 없음)').slice(0, 2000)}
 [출력 JSON - 각 필드 설명을 정확히 따르세요]
 {
   "code": "A/B/C/D/E 중 하나",
-  "category": "자료대응/영업기회/스케줄링/정보수집/필터링 중 하나",
+  "category": "자료대응/영업기획/스케줄링/정보수집/필터링 중 하나",
   "priority": "high/medium/low",
   "importance": "상/중/하",
   "summary": "팩트 중심 핵심 요약. '누가, 무엇을, 왜' 형식의 1~2문장. 예: 'ABC사 박지민 과장이 히알루론산 카탈로그 및 MSDS 3종을 요청함'",
@@ -362,6 +462,28 @@ export async function askAIAnalyze(
 }
 
 /**
+ * 시장 조사 → Gemini + Google Search (실시간 웹 검색 기반)
+ * Gemini API 키가 없으면 일반 AI로 폴백
+ */
+export async function askAIResearch(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 8192
+): Promise<string> {
+  if (env.GEMINI_API_KEY) {
+    try {
+      return await callGeminiWithSearch(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens);
+    } catch {
+      // Google Search 실패 시 일반 Gemini로 폴백
+      return callGemini(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens, 0.2);
+    }
+  }
+  // Gemini 키 없으면 기존 프리미엄 모델 사용
+  return callPremium(env, prompt, systemPrompt, maxTokens);
+}
+
+/**
  * 거래처 답변 초안 → Claude Sonnet 4.5 (2%)
  */
 export async function askAIDraft(
@@ -387,6 +509,111 @@ export async function askAILong(
     prompt,
     systemPrompt || "당신은 한국 비즈니스 문서 작성 전문가입니다.",
     maxTokens
+  );
+}
+
+// ─── 첨부파일 분석 ───
+
+const ATTACHMENT_ANALYSIS_PROMPT = `이 문서의 내용을 분석하여 다음 형식으로 한국어로 요약해주세요:
+
+**문서 유형**: (예: 발주서, 견적서, MSDS, 인증서, 계약서, 세금계산서, 거래명세서, 기타)
+**핵심 내용**: 2~3문장으로 문서의 핵심 내용을 요약
+**주요 항목**: 품목명, 수량, 금액, 날짜, 회사명 등 주요 데이터 포인트를 나열
+**업무 관련성**: KPROS(화장품 원료 전문기업) 관점에서의 업무 관련성과 필요한 조치
+
+간결하고 팩트 중심으로 작성하세요. 마크다운 형식으로 작성하되 짧게 유지하세요.`;
+
+/** Gemini 멀티모달이 지원하는 MIME 타입 */
+const GEMINI_MULTIMODAL_TYPES = [
+  "application/pdf",
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+];
+
+/** 텍스트 기반으로 분석 가능한 MIME 타입 */
+const TEXT_ANALYZABLE_TYPES = [
+  "text/plain", "text/csv", "text/html", "text/xml",
+  "application/json", "application/xml",
+];
+
+/**
+ * 첨부파일 AI 분석
+ * - PDF/이미지: Gemini 멀티모달 (inline_data)
+ * - 텍스트 파일: 디코딩 후 텍스트 분석
+ * - 기타: 파일명 기반 간략 분석
+ */
+export async function analyzeAttachment(
+  env: Env,
+  fileName: string,
+  contentType: string,
+  base64Data: string,
+): Promise<string> {
+  const ct = (contentType || "").toLowerCase();
+
+  // 1) PDF / 이미지 → Gemini 멀티모달
+  if (env.GEMINI_API_KEY && GEMINI_MULTIMODAL_TYPES.some(t => ct.includes(t))) {
+    try {
+      return await callGeminiMultimodal(
+        env.GEMINI_API_KEY,
+        `파일명: ${fileName}\n\n${ATTACHMENT_ANALYSIS_PROMPT}`,
+        base64Data,
+        ct.includes("pdf") ? "application/pdf" :
+        ct.includes("jpeg") || ct.includes("jpg") ? "image/jpeg" :
+        ct.includes("png") ? "image/png" :
+        ct.includes("gif") ? "image/gif" : "image/webp",
+        "당신은 비즈니스 문서 분석 전문가입니다. KPROS(화장품 원료 전문기업)의 업무 맥락에서 분석하세요.",
+        1024
+      );
+    } catch (e) {
+      console.error(`[AI] Gemini multimodal failed for ${fileName}:`, e);
+      // 폴백: 파일명 기반 분석
+    }
+  }
+
+  // 2) 텍스트 파일 → 디코딩 후 텍스트 분석
+  if (TEXT_ANALYZABLE_TYPES.some(t => ct.includes(t))) {
+    try {
+      const b64 = base64Data.replace(/-/g, "+").replace(/_/g, "/");
+      const binaryStr = atob(b64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const textContent = new TextDecoder("utf-8").decode(bytes);
+      const truncated = textContent.slice(0, 10000);
+
+      return await callFast(
+        env,
+        `파일명: ${fileName}\n파일 내용:\n${truncated}\n\n${ATTACHMENT_ANALYSIS_PROMPT}`,
+        "당신은 비즈니스 문서 분석 전문가입니다.",
+        1024
+      );
+    } catch (e) {
+      console.error(`[AI] Text analysis failed for ${fileName}:`, e);
+    }
+  }
+
+  // 3) Excel/Word 등 바이너리 → Gemini 멀티모달 시도 (지원 가능할 수 있음)
+  if (env.GEMINI_API_KEY && (ct.includes("spreadsheet") || ct.includes("excel") || ct.includes("word") || ct.includes("document"))) {
+    try {
+      return await callGeminiMultimodal(
+        env.GEMINI_API_KEY,
+        `파일명: ${fileName}\n\n${ATTACHMENT_ANALYSIS_PROMPT}`,
+        base64Data,
+        contentType,
+        "당신은 비즈니스 문서 분석 전문가입니다.",
+        1024
+      );
+    } catch (e) {
+      console.error(`[AI] Gemini binary analysis failed for ${fileName}:`, e);
+    }
+  }
+
+  // 4) 폴백: 파일명 기반 간략 분석
+  return await callFast(
+    env,
+    `이메일에 첨부된 파일 "${fileName}" (유형: ${contentType}, 크기: 분석 불가)에 대해 파일명과 유형만으로 추정 분석해주세요.\n\n${ATTACHMENT_ANALYSIS_PROMPT}\n\n참고: 파일 내용 직접 분석이 불가하여 파일명/유형 기반 추정입니다. 이를 분석 결과에 명시하세요.`,
+    undefined,
+    512
   );
 }
 

@@ -9,6 +9,8 @@ imaplib2==3.6
 requests==2.31.0
 pydantic==2.6.0
 fpdf2>=2.7.0
+slack-sdk>=3.27.0
+pypdf>=4.0.0
 
 # Database
 sqlalchemy>=2.0.0

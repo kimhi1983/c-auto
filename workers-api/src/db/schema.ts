@@ -65,6 +65,7 @@ export const emailAttachments = sqliteTable('email_attachments', {
   filePath: text('file_path'),
   fileSize: integer('file_size'),
   contentType: text('content_type'),
+  aiAnalysis: text('ai_analysis'),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 
