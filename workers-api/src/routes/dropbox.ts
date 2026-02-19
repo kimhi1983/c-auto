@@ -273,13 +273,17 @@ dropboxRouter.post("/upload", async (c) => {
   // 카테고리 → 폴더 매핑
   const CATEGORY_FOLDERS: Record<string, string> = {
     '자료대응': 'A.자료대응',
-    '영업기회': 'B.영업기회',
-    '스케줄링': 'C.스케줄링',
-    '정보수집': 'D.정보수집',
-    '필터링': 'E.필터링',
+    '성적서대응': 'B.성적서대응',
+    '발주관리': 'C.발주관리',
+    '필터링': 'D.필터링',
+    // 레거시 호환
+    '영업기회': 'C.발주관리',
+    '영업기획': 'C.발주관리',
+    '스케줄링': 'C.발주관리',
+    '정보수집': 'D.필터링',
   };
 
-  const folderName = CATEGORY_FOLDERS[body.category] || 'E.필터링';
+  const folderName = CATEGORY_FOLDERS[body.category] || 'D.필터링';
   const filePath = `/AI업무폴더/${folderName}/${body.fileName}`;
 
   try {

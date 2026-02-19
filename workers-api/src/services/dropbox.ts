@@ -109,6 +109,15 @@ export async function getDropboxAccessToken(
   }
 }
 
+// ─── Category → Folder Mapping ───
+
+export const CATEGORY_FOLDER_MAP: Record<string, string> = {
+  '자료대응': 'A.자료대응',
+  '성적서대응': 'B.성적서대응',
+  '발주관리': 'C.발주관리',
+  '필터링': 'D.필터링',
+};
+
 // ─── Config ───
 
 // 검색에서 제외할 폴더 목록
@@ -342,6 +351,63 @@ export async function uploadDropboxFile(
     path: result.path_display || path,
     size: result.size || data.byteLength,
   };
+}
+
+// ─── Upload Attachment to Dropbox (카테고리/날짜별 분류) ───
+
+export async function uploadAttachmentToDropbox(
+  accessToken: string,
+  category: string,
+  dateStr: string,
+  fileName: string,
+  data: Uint8Array
+): Promise<{ path: string; size: number }> {
+  const folderName = CATEGORY_FOLDER_MAP[category] || 'D.필터링';
+  const basePath = `/AI업무폴더/${folderName}/${dateStr}`;
+
+  // 날짜 폴더 생성
+  try {
+    await createDropboxFolder(accessToken, basePath);
+  } catch {
+    // 이미 존재하면 무시
+  }
+
+  const filePath = `${basePath}/${fileName}`;
+  const result = await uploadDropboxFile(accessToken, filePath, data);
+  return { path: result.path, size: result.size };
+}
+
+// ─── Download File from Dropbox ───
+
+export async function downloadDropboxFile(
+  accessToken: string,
+  path: string
+): Promise<{ data: Uint8Array; name: string; contentType: string }> {
+  const res = await fetch(`${DROPBOX_CONTENT_URL}/files/download`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Dropbox-API-Arg": JSON.stringify({ path }),
+    },
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Dropbox download failed: ${err}`);
+  }
+
+  const apiResult = res.headers.get("Dropbox-API-Result");
+  let name = path.split("/").pop() || "file";
+  if (apiResult) {
+    try {
+      const meta = JSON.parse(apiResult);
+      name = meta.name || name;
+    } catch { /* ignore */ }
+  }
+
+  const arrayBuf = await res.arrayBuffer();
+  const contentType = res.headers.get("Content-Type") || "application/octet-stream";
+  return { data: new Uint8Array(arrayBuf), name, contentType };
 }
 
 // ─── Multi-keyword Search (KPROS) ───

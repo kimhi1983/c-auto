@@ -408,6 +408,175 @@ export function decodeAttachmentToText(data: string): string {
   return decodeBase64Url(data);
 }
 
+// ─── 메일 발송 ───
+
+/**
+ * RFC 2822 형식 이메일 메시지 생성
+ */
+function buildRawEmail(options: {
+  to: string;
+  from: string;
+  cc?: string;
+  subject: string;
+  body: string;
+  inReplyTo?: string;
+}): string {
+  const lines = [
+    `To: ${options.to}`,
+    `From: ${options.from}`,
+  ];
+  if (options.cc) lines.push(`Cc: ${options.cc}`);
+  lines.push(`Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(options.subject)))}?=`);
+  lines.push("MIME-Version: 1.0");
+  lines.push("Content-Type: text/plain; charset=UTF-8");
+  lines.push("Content-Transfer-Encoding: base64");
+  if (options.inReplyTo) lines.push(`In-Reply-To: ${options.inReplyTo}`);
+  lines.push(""); // blank line separating headers from body
+  // base64 encode the body
+  lines.push(btoa(unescape(encodeURIComponent(options.body))));
+  return lines.join("\r\n");
+}
+
+/**
+ * MIME multipart/mixed 이메일 생성 (본문 + 첨부파일)
+ */
+export interface EmailAttachmentData {
+  fileName: string;
+  contentType: string;
+  base64Data: string; // standard base64
+}
+
+function buildRawEmailWithAttachments(options: {
+  to: string;
+  from: string;
+  cc?: string;
+  subject: string;
+  body: string;
+  inReplyTo?: string;
+  attachments: EmailAttachmentData[];
+}): string {
+  const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  const headers = [
+    `To: ${options.to}`,
+    `From: ${options.from}`,
+  ];
+  if (options.cc) headers.push(`Cc: ${options.cc}`);
+  headers.push(`Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(options.subject)))}?=`);
+  headers.push("MIME-Version: 1.0");
+  headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  if (options.inReplyTo) headers.push(`In-Reply-To: ${options.inReplyTo}`);
+  headers.push(""); // blank line
+
+  const parts: string[] = [];
+
+  // Text body part
+  parts.push(`--${boundary}`);
+  parts.push("Content-Type: text/plain; charset=UTF-8");
+  parts.push("Content-Transfer-Encoding: base64");
+  parts.push("");
+  parts.push(btoa(unescape(encodeURIComponent(options.body))));
+
+  // Attachment parts
+  for (const att of options.attachments) {
+    const encodedName = `=?UTF-8?B?${btoa(unescape(encodeURIComponent(att.fileName)))}?=`;
+    parts.push(`--${boundary}`);
+    parts.push(`Content-Type: ${att.contentType}; name="${encodedName}"`);
+    parts.push(`Content-Disposition: attachment; filename="${encodedName}"`);
+    parts.push("Content-Transfer-Encoding: base64");
+    parts.push("");
+    // Split base64 into 76-char lines per RFC
+    const b64 = att.base64Data;
+    for (let i = 0; i < b64.length; i += 76) {
+      parts.push(b64.slice(i, i + 76));
+    }
+  }
+
+  parts.push(`--${boundary}--`);
+
+  return headers.join("\r\n") + "\r\n" + parts.join("\r\n");
+}
+
+/**
+ * base64 → base64url 변환 (Gmail API 용)
+ */
+function base64ToBase64Url(str: string): string {
+  return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Uint8Array → standard base64
+ */
+function uint8ArrayToBase64(data: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < data.length; i++) {
+    binary += String.fromCharCode(data[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Gmail API로 이메일 발송 (첨부파일 지원)
+ */
+export async function sendGmailMessage(
+  accessToken: string,
+  options: {
+    to: string;
+    from?: string;
+    cc?: string;
+    subject: string;
+    body: string;
+    inReplyTo?: string;
+    attachments?: EmailAttachmentData[];
+  }
+): Promise<{ id: string; threadId: string; labelIds: string[] }> {
+  let rawEmail: string;
+
+  if (options.attachments && options.attachments.length > 0) {
+    rawEmail = buildRawEmailWithAttachments({
+      to: options.to,
+      from: options.from || "me",
+      cc: options.cc,
+      subject: options.subject,
+      body: options.body,
+      inReplyTo: options.inReplyTo,
+      attachments: options.attachments,
+    });
+  } else {
+    rawEmail = buildRawEmail({
+      to: options.to,
+      from: options.from || "me",
+      cc: options.cc,
+      subject: options.subject,
+      body: options.body,
+      inReplyTo: options.inReplyTo,
+    });
+  }
+
+  // raw email → base64url for Gmail API
+  // Use Uint8Array for proper UTF-8 encoding of multipart content
+  const encoder = new TextEncoder();
+  const rawBytes = encoder.encode(rawEmail);
+  const base64Raw = uint8ArrayToBase64(rawBytes);
+  const encodedMessage = base64ToBase64Url(base64Raw);
+
+  const res = await fetch(`${GMAIL_API_BASE}/messages/send`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw: encodedMessage }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gmail send failed: ${res.status} ${text}`);
+  }
+
+  return res.json();
+}
+
 // ─── 헬퍼 ───
 
 export function isGmailConfigured(env: {

@@ -118,4 +118,23 @@ usersRouter.patch("/:id", async (c) => {
   });
 });
 
+/**
+ * DELETE /users/:id - 사용자 삭제
+ */
+usersRouter.delete("/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+
+  const [deleted] = await db
+    .delete(users)
+    .where(eq(users.id, id))
+    .returning();
+
+  if (!deleted) {
+    return c.json({ error: "사용자를 찾을 수 없습니다" }, 404);
+  }
+
+  return c.json({ status: "success", message: "사용자가 삭제되었습니다" });
+});
+
 export default usersRouter;

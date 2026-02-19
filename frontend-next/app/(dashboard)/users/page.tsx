@@ -19,12 +19,20 @@ export default function UsersPage() {
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
   const [newUser, setNewUser] = useState({
     email: '',
     password: '',
     full_name: '',
     role: 'staff',
     department: '',
+  });
+  const [editForm, setEditForm] = useState({
+    full_name: '',
+    role: '',
+    department: '',
+    is_active: true,
+    password: '',
   });
 
   const loadUsers = async () => {
@@ -80,6 +88,73 @@ export default function UsersPage() {
     }
   };
 
+  const handleEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setFormLoading(true);
+    setError('');
+
+    try {
+      const body: Record<string, any> = {
+        full_name: editForm.full_name,
+        role: editForm.role,
+        department: editForm.department,
+        is_active: editForm.is_active,
+      };
+      if (editForm.password) body.password = editForm.password;
+
+      const response = await fetch(apiUrl(`/api/v1/users/${editingUser.id}`), {
+        method: 'PATCH',
+        headers: authJsonHeaders(),
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || '사용자 수정 실패');
+      }
+
+      setEditingUser(null);
+      loadUsers();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (user: User) => {
+    if (!confirm(`"${user.full_name}" 사용자를 삭제하시겠습니까?`)) return;
+
+    try {
+      const response = await fetch(apiUrl(`/api/v1/users/${user.id}`), {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || '삭제 실패');
+      }
+
+      loadUsers();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const startEdit = (user: User) => {
+    setEditingUser(user);
+    setEditForm({
+      full_name: user.full_name,
+      role: user.role,
+      department: user.department || '',
+      is_active: user.is_active,
+      password: '',
+    });
+    setShowForm(false);
+  };
+
   const roleLabel: Record<string, string> = {
     admin: '관리자',
     approver: '승인자',
@@ -102,7 +177,7 @@ export default function UsersPage() {
           <p className="text-slate-500 mt-1">시스템 사용자 계정 관리 (관리자 전용)</p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => { setShowForm(!showForm); setEditingUser(null); }}
           className="px-4 py-2.5 rounded-2xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition"
         >
           {showForm ? '취소' : '새 사용자 추가'}
@@ -112,6 +187,7 @@ export default function UsersPage() {
       {error && (
         <div className="bg-red-50 text-red-700 px-4 py-3 rounded-2xl text-sm border border-red-200">
           {error}
+          <button onClick={() => setError('')} className="ml-2 font-bold">&times;</button>
         </div>
       )}
 
@@ -192,6 +268,92 @@ export default function UsersPage() {
         </div>
       )}
 
+      {/* Edit User Form */}
+      {editingUser && (
+        <div className="bg-white rounded-2xl border border-blue-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-base font-semibold text-slate-900">사용자 수정 - {editingUser.full_name}</h3>
+            <button onClick={() => setEditingUser(null)} className="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
+          </div>
+          <form onSubmit={handleEditUser} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">아이디</label>
+              <div className="w-full rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+                {editingUser.email}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">새 비밀번호 (변경 시만 입력)</label>
+              <input
+                type="password"
+                value={editForm.password}
+                onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-200 focus:outline-none"
+                placeholder="변경하지 않으려면 비워두세요"
+                minLength={8}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">이름</label>
+              <input
+                type="text"
+                value={editForm.full_name}
+                onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-200 focus:outline-none"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">부서</label>
+              <input
+                type="text"
+                value={editForm.department}
+                onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-200 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">역할</label>
+              <select
+                value={editForm.role}
+                onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-200 focus:outline-none"
+              >
+                <option value="staff">직원</option>
+                <option value="approver">승인자</option>
+                <option value="viewer">뷰어</option>
+                <option value="admin">관리자</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">상태</label>
+              <div className="flex items-center gap-3 mt-1">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" checked={editForm.is_active} onChange={() => setEditForm({ ...editForm, is_active: true })}
+                    className="w-4 h-4 text-green-600" />
+                  <span className="text-sm text-slate-700">활성</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" checked={!editForm.is_active} onChange={() => setEditForm({ ...editForm, is_active: false })}
+                    className="w-4 h-4 text-red-600" />
+                  <span className="text-sm text-slate-700">비활성</span>
+                </label>
+              </div>
+            </div>
+            <div className="md:col-span-2 flex gap-2 justify-end">
+              <button type="button" onClick={() => setEditingUser(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+                취소
+              </button>
+              <button type="submit" disabled={formLoading}
+                className="px-6 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50">
+                {formLoading ? '저장 중...' : '저장'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Users Table */}
       {loading ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
@@ -207,6 +369,7 @@ export default function UsersPage() {
                 <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">역할</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">부서</th>
                 <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">상태</th>
+                <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">관리</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -231,6 +394,24 @@ export default function UsersPage() {
                   <td className="px-6 py-4 text-sm text-slate-600">{user.department || '-'}</td>
                   <td className="px-6 py-4 text-center">
                     <span className={`inline-block w-2 h-2 rounded-full ${user.is_active ? 'bg-green-500' : 'bg-slate-300'}`} />
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={() => startEdit(user)}
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-blue-600 hover:bg-blue-50 transition"
+                        title="수정"
+                      >
+                        수정
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(user)}
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-red-500 hover:bg-red-50 transition"
+                        title="삭제"
+                      >
+                        삭제
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

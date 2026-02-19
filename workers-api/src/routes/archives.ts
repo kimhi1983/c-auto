@@ -3,7 +3,7 @@
  */
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, desc, like, and, count, gte, sql } from "drizzle-orm";
+import { eq, desc, like, and, count, gte, lt, sql } from "drizzle-orm";
 import { archivedDocuments, dailyReports, emails } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import { askAIAnalyze } from "../services/ai";
@@ -323,7 +323,12 @@ archives.post("/generate-report", async (c) => {
   const typeLabel = reportType === "daily" ? "일간" : reportType === "weekly" ? "주간" : "월간";
   const periodLabel = reportType === "daily" ? today : `${startDate} ~ ${today}`;
 
-  // 기간 내 이메일 조회
+  // 종료일 (다음날 0시) - 기간 상한선
+  const endDate = new Date(now);
+  endDate.setDate(endDate.getDate() + 1);
+  const endDateStr = endDate.toISOString().split("T")[0];
+
+  // 기간 내 이메일 조회 (startDate <= receivedAt < endDate)
   const emailList = await db
     .select({
       id: emails.id,
@@ -336,7 +341,7 @@ archives.post("/generate-report", async (c) => {
       receivedAt: emails.receivedAt,
     })
     .from(emails)
-    .where(gte(emails.receivedAt, startDate))
+    .where(and(gte(emails.receivedAt, startDate), lt(emails.receivedAt, endDateStr)))
     .orderBy(desc(emails.receivedAt))
     .limit(500);
 
@@ -355,7 +360,9 @@ archives.post("/generate-report", async (c) => {
   }> = [];
 
   const catCodeMap: Record<string, string> = {
-    "자료대응": "A", "영업기회": "B", "스케줄링": "C", "정보수집": "D", "필터링": "E",
+    "자료대응": "A", "성적서대응": "B", "발주관리": "C", "필터링": "D",
+    // 레거시 호환
+    "영업기회": "C", "영업기획": "C", "스케줄링": "C", "정보수집": "D",
   };
 
   for (let idx = 0; idx < emailList.length; idx++) {
@@ -395,14 +402,14 @@ archives.post("/generate-report", async (c) => {
       approvalItems.push({ subject: e.subject || "", sender: e.sender || "", company, summary: directorReport || summary, category: cat });
     }
 
-    if (pri === "high" || cat === "영업기회") {
+    if (pri === "high" || cat === "발주관리") {
       keyEmailItems.push({ category: cat, subject: e.subject || "", sender: e.sender || "", company, summary: directorReport || summary, priority: pri === "high" ? "긴급" : "일반" });
     }
   }
 
   // 카테고리 통계 배열
-  const catOrder = ["자료대응", "영업기회", "스케줄링", "정보수집", "필터링"];
-  const catCodes = ["A", "B", "C", "D", "E"];
+  const catOrder = ["자료대응", "성적서대응", "발주관리", "필터링"];
+  const catCodes = ["A", "B", "C", "D"];
   const categories = catOrder.map((name, i) => ({
     code: catCodes[i], name, count: categoryMap[name] || 0,
   }));
@@ -413,21 +420,63 @@ archives.post("/generate-report", async (c) => {
     }
   }
 
-  // AI 분석 요약
+  // AI 분석 요약 - 총책임자 관점 상세 보고서
   let aiInsight = "";
   if (emailList.length > 0) {
     try {
-      const summaryData = emailList.slice(0, 30).map((e) => {
+      const summaryData = emailList.slice(0, 50).map((e, i) => {
         let p: any = null;
         try { p = JSON.parse(e.aiSummary || ""); } catch {}
-        return `[${e.category}] ${e.subject} - ${p?.summary || ""}`;
-      }).join("\n");
+        const dir = p?.direction === "outbound" ? "[발신]" : p?.request_type === "inbound_request" ? "[수신요청]" : p?.request_type === "inbound_reply" ? "[회신수신]" : "[수신]";
+        return `${i+1}. ${dir} [${e.category}/${e.priority === "high" ? "긴급" : "일반"}] ${e.subject}\n   발신: ${e.sender} | 회사: ${p?.company_name || "-"}\n   요약: ${p?.summary || e.subject}\n   조치: ${p?.action_items || "없음"}\n   상태: ${e.status === "sent" ? "발송완료" : e.status === "unread" ? "미처리" : e.status === "replied" ? "답변완료" : e.status || "확인중"}`;
+      }).join("\n\n");
+
+      const catStats = catOrder.map((name, i) => `${catCodes[i]}.${name}: ${categoryMap[name] || 0}건`).join(", ");
+      const priStats = `긴급 ${priorityMap["high"] || 0}건, 일반 ${priorityMap["medium"] || 0}건, 낮음 ${priorityMap["low"] || 0}건`;
 
       aiInsight = await askAIAnalyze(
         c.env,
-        `다음은 KPROS의 ${typeLabel} 이메일 현황입니다. 3줄 핵심 요약과 주의해야 할 사항을 간결하게 작성하세요. 인사말이나 호칭 없이 바로 본론으로 시작하세요.\n\n${summaryData}`,
-        "당신은 KPROS(화장품 원료 전문기업) 경영 보고서 작성 전문가입니다. 인사말이나 호칭(이사님께 등) 없이 핵심만 간결하게 작성합니다.",
-        1024
+        `당신은 KPROS(케이프로스, 글로벌 화장품 원료 전문기업) 총책임자입니다.
+아래 ${typeLabel} 이메일 현황을 분석하여 경영진 보고서를 작성하세요.
+
+[통계]
+- 총 ${emailList.length}건 (${catStats})
+- 우선순위: ${priStats}
+- 승인 필요: ${approvalItems.length}건
+
+[이메일 상세]
+${summaryData}
+
+[보고서 작성 규칙]
+1. 마크다운 형식으로 작성 (##, **, - 사용)
+2. 인사말/호칭 없이 바로 본론
+3. 다음 섹션을 반드시 포함:
+
+## 금일 업무 총평
+- 전체 현황을 2~3문장으로 요약. 특이사항과 업무 부하 수준 평가.
+
+## 카테고리별 주요 내용
+각 카테고리(A~D)별로 핵심 메일을 정리:
+- **A.자료대응**: 어떤 회사에서 어떤 자료를 요청했는지, 처리 현황
+- **B.성적서대응**: 어떤 성적서/증빙이 수신/요청되었는지
+- **C.발주관리**: 발주, 견적, 선적, 납기 관련 핵심 건
+- **D.필터링**: 건수만 간략히
+(해당 카테고리에 메일이 없으면 "해당 없음"으로 표기)
+
+## 긴급 조치 필요 건
+- 긴급(high) 이메일 또는 즉시 대응이 필요한 건을 구체적으로 나열
+- 없으면 "긴급 건 없음"
+
+## 미처리 현황 및 권고사항
+- 미처리(unread) 상태인 메일 중 주의가 필요한 건
+- 총책임자로서의 업무 우선순위 권고
+- 리스크 요인이 있다면 경고
+
+## 보낸메일 요약
+- 당사(KPROS)에서 발송한 메일이 있다면 주요 내용 정리
+- 없으면 생략`,
+        "당신은 KPROS 총책임자(이사)로서 모든 업무를 총괄하는 입장에서 보고서를 작성합니다. 각 메일의 비즈니스 맥락을 파악하고, 실질적인 판단과 지시 사항을 포함합니다. 구체적인 회사명, 제품명, 요청 내용을 반드시 언급하며 추상적 표현을 지양합니다.",
+        4096
       );
     } catch (e) {
       console.error("[Report] AI insight generation failed:", e);

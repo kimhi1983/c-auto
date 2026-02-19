@@ -1,10 +1,10 @@
 /**
  * Email Management Routes - /api/v1/emails
- * KPROS 5-카테고리 AI 자동화 시스템 v2
+ * KPROS 4-카테고리 AI 자동화 시스템 (자료대응/성적서대응/발주관리/필터링)
  */
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, desc, like, and, sql, count } from "drizzle-orm";
+import { eq, desc, like, and, sql, count, inArray } from "drizzle-orm";
 import { emails, emailApprovals, emailAttachments } from "../db/schema";
 import { authMiddleware, requireApprover } from "../middleware/auth";
 import { classifyEmailAdvanced, askAIDraft, analyzeAttachment, KPROS_EMAIL_SYSTEM_PROMPT } from "../services/ai";
@@ -17,12 +17,34 @@ import {
   parseGmailMessage,
   downloadGmailAttachment,
   base64UrlToBase64,
+  sendGmailMessage,
+  type EmailAttachmentData,
 } from "../services/gmail";
+import {
+  isDropboxConfigured,
+  getDropboxAccessToken as getDropboxToken,
+  uploadAttachmentToDropbox,
+  downloadDropboxFile,
+} from "../services/dropbox";
 import type { Env } from "../types";
 
 const emailsRouter = new Hono<{ Bindings: Env }>();
 
 emailsRouter.use("*", authMiddleware);
+
+/**
+ * RFC 2822 등 다양한 날짜 형식을 ISO 8601로 정규화
+ */
+function normalizeDate(dateStr: string | null | undefined, fallback: string): string {
+  if (!dateStr) return fallback;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return fallback;
+    return d.toISOString();
+  } catch {
+    return fallback;
+  }
+}
 
 /**
  * AI가 JSON으로 응답한 경우 텍스트만 추출하는 헬퍼
@@ -57,9 +79,22 @@ emailsRouter.get("/", async (c) => {
   const limit = parseInt(c.req.query("limit") || "20");
   const offset = (page - 1) * limit;
 
+  // 레거시 카테고리 매핑 (발주관리 ← 영업기회/영업기획/스케줄링/발주/발주내역, 필터링 ← 정보수집)
+  const CATEGORY_EXPAND: Record<string, string[]> = {
+    '발주관리': ['발주관리', '영업기회', '영업기획', '스케줄링', '발주', '발주내역'],
+    '필터링': ['필터링', '정보수집'],
+  };
+
   const conditions = [];
   if (status) conditions.push(eq(emails.status, status as any));
-  if (category) conditions.push(eq(emails.category, category as any));
+  if (category) {
+    const expanded = CATEGORY_EXPAND[category];
+    if (expanded) {
+      conditions.push(inArray(emails.category, expanded as any));
+    } else {
+      conditions.push(eq(emails.category, category as any));
+    }
+  }
   if (search) conditions.push(like(emails.subject, `%${search}%`));
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -196,6 +231,7 @@ emailsRouter.get("/:id", async (c) => {
         file_size: a.fileSize,
         content_type: a.contentType,
         ai_analysis: a.aiAnalysis || null,
+        dropbox_path: a.dropboxPath || null,
       })),
     },
   });
@@ -234,25 +270,26 @@ emailsRouter.post("/fetch", async (c) => {
         }, 401);
       }
 
-      // ── Phase 1: Gmail에서 메일 ID 목록 가져오기 (페이지네이션) ──
-      let messageRefs = await listGmailMessagesAll(accessToken, maxCount, "label:KPROS is:unread");
+      // ── Phase 1: Gmail에서 메일 ID 목록 가져오기 (최근 30일) ──
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const afterEpoch = Math.floor(thirtyDaysAgo.getTime() / 1000);
+      const gmailQuery = `label:KPROS after:${afterEpoch}`;
+
+      let messageRefs = await listGmailMessagesAll(accessToken, maxCount, gmailQuery);
 
       if (messageRefs.length === 0) {
-        // 읽지 않은 메일 없으면 KPROS 라벨 전체에서 재시도
-        messageRefs = await listGmailMessagesAll(accessToken, maxCount, "label:KPROS");
-        if (messageRefs.length === 0) {
-          return c.json({
-            status: "success",
-            message: "KPROS 라벨에 새 이메일이 없습니다",
-            count: 0,
-            source: "gmail",
-            data: [],
-          });
-        }
+        return c.json({
+          status: "success",
+          message: "KPROS 라벨에 새 이메일이 없습니다",
+          count: 0,
+          source: "gmail",
+          data: [],
+        });
       }
 
       // ── Phase 1: 중복 제외 + Gmail 상세 조회 + DB 저장 (AI 없이) ──
-      const saved: Array<{ id: number; gmailId: string; subject: string; sender: string; body: string }> = [];
+      const saved: Array<{ id: number; gmailId: string; subject: string; sender: string; recipient: string; body: string; isOurMail: boolean }> = [];
       const BATCH_SIZE = 10;
 
       for (let i = 0; i < messageRefs.length; i += BATCH_SIZE) {
@@ -273,6 +310,9 @@ emailsRouter.post("/fetch", async (c) => {
             const fullMsg = await getGmailMessage(accessToken, ref.id);
             const parsed = parseGmailMessage(fullMsg);
 
+            // kpros.kr 발신 메일 → 보낸메일(sent)로 분류
+            const isOurMail = /kpros\.kr/i.test(parsed.from || "");
+
             // DB 저장 (AI 분류 없이 - 임시 분류로 저장)
             const [inserted] = await db
               .insert(emails)
@@ -285,13 +325,13 @@ emailsRouter.post("/fetch", async (c) => {
                 bodyHtml: parsed.bodyHtml || null,
                 category: "필터링" as any,      // 임시 - 백그라운드 AI가 업데이트
                 priority: "medium" as any,
-                status: "unread",
+                status: isOurMail ? "sent" : "unread",
                 aiSummary: null,                 // 백그라운드 AI가 채움
                 aiDraftResponse: null,
                 draftSubject: null,
                 aiConfidence: 0,
                 processedBy: user.userId,
-                receivedAt: parsed.date || now,
+                receivedAt: normalizeDate(parsed.date, now),
                 processedAt: now,
               })
               .returning();
@@ -314,7 +354,9 @@ emailsRouter.post("/fetch", async (c) => {
               gmailId: ref.id,
               subject: parsed.subject,
               sender: parsed.from,
+              recipient: parsed.to || user.email,
               body: parsed.body || "",
+              isOurMail,
             };
           })
         );
@@ -337,11 +379,27 @@ emailsRouter.post("/fetch", async (c) => {
             await Promise.allSettled(
               aiBatch.map(async (item) => {
                 try {
+                  // ── 보낸메일(kpros.kr 발신)은 AI 분류 스킵 ──
+                  if (item.isOurMail) {
+                    const sentSummary = JSON.stringify({
+                      code: "-", summary: `KPROS에서 ${item.recipient}에게 발송한 메일`, importance: "하",
+                      action_items: "", search_keywords: [], director_report: "당사 발송 메일 - 별도 조치 불필요",
+                      needs_approval: false, company_name: "KPROS(자사)", sender_info: item.sender,
+                      estimated_revenue: "", note: "보낸메일", direction: "outbound",
+                    });
+                    await db.update(emails).set({
+                      category: "필터링" as any, priority: "low" as any, status: "sent",
+                      aiSummary: sentSummary, aiConfidence: 100,
+                    }).where(eq(emails.id, item.id));
+                    return;
+                  }
+
                   const classification = await classifyEmailAdvanced(
                     c.env,
                     item.sender,
                     item.subject,
-                    item.body
+                    item.body,
+                    item.recipient
                   );
                   const jsonMatch = classification.match(/\{[\s\S]*\}/);
                   if (jsonMatch) {
@@ -359,6 +417,7 @@ emailsRouter.post("/fetch", async (c) => {
                       sender_info: p.sender_info || "",
                       estimated_revenue: p.estimated_revenue || "",
                       note: p.note || "",
+                      direction: p.direction || "inbound",
                     });
                     const initialStatus = category === "필터링" ? "read" : "unread";
 
@@ -384,7 +443,7 @@ emailsRouter.post("/fetch", async (c) => {
                   await db.update(emails)
                     .set({
                       aiSummary: JSON.stringify({
-                        code: "D", summary: item.subject, importance: "하",
+                        code: "D", category: "필터링", summary: item.subject, importance: "하",
                         action_items: "", search_keywords: [], director_report: "",
                         needs_approval: false, company_name: "", sender_info: "",
                         estimated_revenue: "", note: "AI 분류 실패 - 수동 확인 필요",
@@ -448,6 +507,70 @@ emailsRouter.post("/fetch", async (c) => {
               }
             }
           }
+
+          // ── Phase 2c: 첨부파일 Dropbox 자동 저장 (모든 이메일) ──
+          if (accessToken && isDropboxConfigured(c.env)) {
+            try {
+              const dropboxToken = await getDropboxToken(
+                c.env.CACHE!,
+                c.env.DROPBOX_APP_KEY!,
+                c.env.DROPBOX_APP_SECRET!
+              );
+              if (dropboxToken) {
+                for (const item of saved) {
+                  try {
+                    const attRows = await db
+                      .select()
+                      .from(emailAttachments)
+                      .where(eq(emailAttachments.emailId, item.id));
+                    if (attRows.length === 0) continue;
+
+                    // 이메일의 최종 카테고리 조회
+                    const [emailRow] = await db
+                      .select({ externalId: emails.externalId, category: emails.category, receivedAt: emails.receivedAt })
+                      .from(emails)
+                      .where(eq(emails.id, item.id))
+                      .limit(1);
+                    if (!emailRow?.externalId) continue;
+
+                    const gmailMsgId = emailRow.externalId.replace("gmail-", "");
+                    const category = emailRow.category || "필터링";
+                    const dateStr = (emailRow.receivedAt || new Date().toISOString()).split("T")[0];
+
+                    for (const att of attRows) {
+                      if (!att.filePath || att.dropboxPath) continue; // 이미 저장됨
+                      if ((att.fileSize || 0) > 10 * 1024 * 1024) continue;
+
+                      try {
+                        const downloaded = await downloadGmailAttachment(accessToken, gmailMsgId, att.filePath);
+                        // base64url → Uint8Array
+                        const b64 = downloaded.data.replace(/-/g, "+").replace(/_/g, "/");
+                        const binStr = atob(b64);
+                        const bytes = new Uint8Array(binStr.length);
+                        for (let k = 0; k < binStr.length; k++) bytes[k] = binStr.charCodeAt(k);
+
+                        const result = await uploadAttachmentToDropbox(
+                          dropboxToken, category, dateStr, att.fileName, bytes
+                        );
+
+                        await db.update(emailAttachments)
+                          .set({ dropboxPath: result.path })
+                          .where(eq(emailAttachments.id, att.id));
+
+                        console.log(`[Dropbox] Saved: ${result.path}`);
+                      } catch (e) {
+                        console.error(`[Dropbox] Upload failed for ${att.fileName}:`, e);
+                      }
+                    }
+                  } catch (e) {
+                    console.error(`[Dropbox] Email ${item.id} upload error:`, e);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("[Dropbox] Auto-save error:", e);
+            }
+          }
         })();
 
         // waitUntil: 응답 반환 후에도 AI 분류 + 첨부파일 분석 계속 실행
@@ -491,23 +614,23 @@ emailsRouter.post("/fetch", async (c) => {
       sender: "김태호 부장 <th.kim@startech.co.kr>",
       subject: "[발주] 히알루론산 나트륨 외 3종 발주 요청",
       body: "안녕하세요, 스타텍 김태호입니다.\n\n아래 품목에 대해 발주를 요청드립니다.\n\n1. 히알루론산 나트륨 50kg\n2. 나이아신아마이드 100kg\n3. 알란토인 30kg\n4. 판테놀 50kg\n\n납기: 2주 이내 희망\n결제조건: 월말 정산\n\n발주서 첨부하오니 확인 부탁드립니다.",
-      category: "발주내역", priority: "high",
+      category: "발주관리", priority: "high",
       sampleAttachments: [
         { fileName: "스타텍_발주서_2025.xlsx", fileSize: 45200, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
       ],
-      aiSummary: JSON.stringify({ code: "B", summary: "스타텍에서 히알루론산 외 3종 총 4품목 발주 요청 (230kg)", importance: "상", action_items: "1. ERP 재고 확인\n2. 이사님께 단가 확인\n3. 납기 확인 후 발주 접수", search_keywords: [], director_report: "스타텍 김태호 부장, 4품목 230kg 발주. 예상 매출 약 800만원. ERP 재고 확인 후 접수 처리 필요.", needs_approval: true, company_name: "스타텍", sender_info: "김태호 (부장)", estimated_revenue: "약 800만원", note: "대량 발주 건" }),
+      aiSummary: JSON.stringify({ code: "C", category: "발주관리", summary: "스타텍에서 히알루론산 외 3종 총 4품목 발주 요청 (230kg)", importance: "상", action_items: "1. ERP 재고 확인\n2. 이사님께 단가 확인\n3. 납기 확인 후 발주 접수", search_keywords: [], director_report: "스타텍 김태호 부장, 4품목 230kg 발주. 예상 매출 약 800만원. ERP 재고 확인 후 접수 처리 필요.", needs_approval: true, company_name: "스타텍", sender_info: "김태호 (부장)", estimated_revenue: "약 800만원", note: "대량 발주 건" }),
       draftReply: "안녕하세요, KPROS입니다.\n\n발주서 접수 확인하였습니다.\n\n요청하신 4개 품목(히알루론산 나트륨, 나이아신아마이드, 알란토인, 판테놀)에 대해 재고 및 납기를 확인 후 안내드리겠습니다.\n\n영업일 기준 1~2일 이내 안내 가능하오니 양해 부탁드립니다.\n\n추가로 확인이 필요한 사항이 있으시면 말씀해 주세요.\n감사합니다.\n\nKPROS 드림",
     },
     {
       sender: "원료팀 <materials@globalchem.co.kr>",
       subject: "[공지] 히알루론산 원료 단가 인상 통보",
       body: "안녕하세요, 글로벌케미칼 원료팀입니다.\n\n글로벌 발효 원료 공급 부족에 따라 히알루론산 나트륨 단가를 아래와 같이 조정합니다.\n\n변동 내용:\n- 대상: 히알루론산 나트륨 (Sodium Hyaluronate)\n- 현행: kg당 ₩45,000\n- 변경: kg당 ₩48,600 (8% 인상)\n- 적용: 2025년 4월 1일부터\n\n양해 부탁드립니다.",
-      category: "정보수집", priority: "medium",
+      category: "필터링", priority: "low",
       sampleAttachments: [
         { fileName: "단가변동_통지서_2025Q2.pdf", fileSize: 95300, contentType: "application/pdf" },
         { fileName: "원료시황_리포트_202502.xlsx", fileSize: 234100, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
       ],
-      aiSummary: JSON.stringify({ code: "C", summary: "글로벌케미칼에서 히알루론산 나트륨 8% 단가 인상 통보 (4/1 적용)", importance: "상", action_items: "2차 공급사 단가 비교 + 현재 단가 재고 확보 검토", search_keywords: [], director_report: "히알루론산 나트륨 8% 인상(₩45,000→₩48,600), 4/1 적용. 주력 세럼 원가 약 3.2% 상승 예상. 대체 공급사 검토 권장.", needs_approval: false, company_name: "글로벌케미칼", sender_info: "원료팀", estimated_revenue: "", note: "원가 영향 분석 필요" }),
+      aiSummary: JSON.stringify({ code: "D", category: "필터링", summary: "글로벌케미칼에서 히알루론산 나트륨 8% 단가 인상 통보 (4/1 적용)", importance: "중", action_items: "자동 아카이브", search_keywords: [], director_report: "히알루론산 나트륨 8% 인상(₩45,000→₩48,600), 4/1 적용. 참고용 정보.", needs_approval: false, company_name: "글로벌케미칼", sender_info: "원료팀", estimated_revenue: "", note: "단가 변동 안내" }),
       draftReply: "",
     },
     {
@@ -516,7 +639,7 @@ emailsRouter.post("/fetch", async (c) => {
       body: "귀사의 매출 200% 성장을 약속합니다!\n\n지금 바로 무료 상담을 받아보세요.\n\n☎ 1588-XXXX\n\n수신거부: reply STOP",
       category: "필터링", priority: "low",
       sampleAttachments: [],
-      aiSummary: JSON.stringify({ code: "D", summary: "스팸 광고 메일 - 마케팅 컨설팅 제안", importance: "하", action_items: "응대 불필요", search_keywords: [], director_report: "", needs_approval: false, company_name: "", sender_info: "", estimated_revenue: "", note: "스팸" }),
+      aiSummary: JSON.stringify({ code: "D", category: "필터링", summary: "스팸 광고 메일 - 마케팅 컨설팅 제안", importance: "하", action_items: "응대 불필요", search_keywords: [], director_report: "", needs_approval: false, company_name: "", sender_info: "", estimated_revenue: "", note: "스팸" }),
       draftReply: "",
     },
   ];
@@ -589,6 +712,24 @@ emailsRouter.post("/fetch", async (c) => {
       500
     );
   }
+});
+
+/**
+ * POST /emails/mark-all-read - 미처리 이메일 일괄 확인 처리
+ */
+emailsRouter.post("/mark-all-read", async (c) => {
+  const db = drizzle(c.env.DB);
+  const now = new Date().toISOString();
+
+  const result = await db
+    .update(emails)
+    .set({ status: "read", updatedAt: now })
+    .where(eq(emails.status, "unread"));
+
+  return c.json({
+    status: "success",
+    message: "미처리 이메일 일괄 확인 완료",
+  });
 });
 
 /**
@@ -702,18 +843,98 @@ emailsRouter.post("/:id/reject", requireApprover, async (c) => {
 });
 
 /**
- * POST /emails/:id/send - 이메일 발송
+ * POST /emails/:id/send - 이메일 발송 (Gmail API + CC kpros@kpros.kr)
  */
 emailsRouter.post("/:id/send", async (c) => {
   const id = parseInt(c.req.param("id"));
   const db = drizzle(c.env.DB);
+  const now = new Date().toISOString();
+
+  const [email] = await db
+    .select()
+    .from(emails)
+    .where(eq(emails.id, id))
+    .limit(1);
+
+  if (!email) {
+    return c.json({ detail: "이메일을 찾을 수 없습니다" }, 404);
+  }
+
+  // 답신 내용
+  const replyBody = email.draftResponse || email.aiDraftResponse || "";
+  const replySubject = email.draftSubject || `Re: ${email.subject}`;
+  const recipientEmail = email.sender || "";
+
+  if (!replyBody) {
+    return c.json({ detail: "발송할 답신 내용이 없습니다. 먼저 답신을 작성해주세요." }, 400);
+  }
+
+  // Dropbox 첨부파일 처리
+  let attachmentDataList: EmailAttachmentData[] = [];
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const dropboxPaths: string[] = body.dropbox_paths || [];
+
+    if (dropboxPaths.length > 0 && isDropboxConfigured(c.env)) {
+      const dropboxToken = await getDropboxToken(
+        c.env.CACHE!,
+        c.env.DROPBOX_APP_KEY!,
+        c.env.DROPBOX_APP_SECRET!
+      );
+      if (dropboxToken) {
+        for (const filePath of dropboxPaths) {
+          try {
+            const file = await downloadDropboxFile(dropboxToken, filePath);
+            // Uint8Array → base64
+            let binary = "";
+            for (let i = 0; i < file.data.length; i++) binary += String.fromCharCode(file.data[i]);
+            attachmentDataList.push({
+              fileName: file.name,
+              contentType: file.contentType,
+              base64Data: btoa(binary),
+            });
+          } catch (e: any) {
+            console.error(`[Send] Dropbox download failed for ${filePath}:`, e.message);
+          }
+        }
+      }
+    }
+  } catch { /* no body or parse error - continue without attachments */ }
+
+  // Gmail API로 실제 발송 시도
+  if (isGmailConfigured(c.env)) {
+    try {
+      const accessToken = await getGmailAccessToken(
+        c.env.CACHE!,
+        c.env.GMAIL_CLIENT_ID!,
+        c.env.GMAIL_CLIENT_SECRET!
+      );
+
+      if (accessToken) {
+        await sendGmailMessage(accessToken, {
+          to: recipientEmail,
+          from: "KPROS <kpros@kpros.kr>",
+          cc: "kpros@kpros.kr",
+          subject: replySubject,
+          body: replyBody,
+          attachments: attachmentDataList.length > 0 ? attachmentDataList : undefined,
+        });
+      }
+    } catch (err: any) {
+      // Gmail 발송 실패해도 상태는 업데이트 (로그만 남김)
+      console.error(`[Send] Gmail send failed for email ${id}:`, err.message);
+    }
+  }
 
   await db
     .update(emails)
-    .set({ status: "sent", sentAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+    .set({ status: "sent", sentAt: now, updatedAt: now })
     .where(eq(emails.id, id));
 
-  return c.json({ status: "success", message: "이메일이 발송되었습니다" });
+  const attMsg = attachmentDataList.length > 0
+    ? ` (첨부 ${attachmentDataList.length}건)`
+    : "";
+  return c.json({ status: "success", message: `이메일이 발송되었습니다 (CC: kpros@kpros.kr)${attMsg}` });
 });
 
 /**
@@ -738,7 +959,8 @@ emailsRouter.post("/:id/reclassify", async (c) => {
       c.env,
       email.sender || "",
       email.subject || "",
-      email.body || ""
+      email.body || "",
+      email.recipient || ""
     );
     const jsonMatch = classification.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -760,6 +982,8 @@ emailsRouter.post("/:id/reclassify", async (c) => {
         sender_info: p.sender_info || "",
         estimated_revenue: p.estimated_revenue || "",
         note: p.note || "",
+        direction: p.direction || "inbound",
+        request_type: p.request_type || "",
       });
 
       await db
@@ -801,27 +1025,35 @@ emailsRouter.post("/:id/generate-draft", async (c) => {
     return c.json({ detail: "이메일을 찾을 수 없습니다" }, 404);
   }
 
-  const prompt = `다음 비즈니스 이메일에 대한 답신을 작성해주세요.
+  const prompt = `당신은 KPROS(케이프로스) — 글로벌 화장품 원료 전문기업의 수석 커뮤니케이션 담당자입니다.
+다음 수신 이메일에 대해 격조 높고 전문적인 비즈니스 답신을 작성하세요.
 
-중요: JSON이 아닌 일반 이메일 본문 텍스트로만 답변하세요. 코드블록(\`\`\`)이나 JSON 형식을 사용하지 마세요.
+[작성 규칙]
+- 형식: 순수 이메일 본문 텍스트만 출력. JSON, 코드블록(\`\`\`), 마크다운 절대 사용 금지.
+- 서두: "안녕하세요, KPROS입니다." 로 시작
+- 마무리: 감사 인사 + "KPROS 드림" 으로 종료
+- 문체: 존경을 담되 군더더기 없는 비즈니스 경어체. 간결하면서도 신뢰감이 느껴지는 전문가 톤.
+- 상대 메일 내용을 정확히 파악하여 맥락에 맞는 구체적 답변을 작성하세요.
+- 단순 "확인했습니다" 식 1줄 답변이 아니라, 상대의 요청 사항을 요약·확인하고 후속 조치를 명확히 안내하세요.
 
-답변 서두에 "안녕하세요, KPROS입니다."를 포함하고, 마무리에 "KPROS 드림"을 넣어주세요.
-
+[수신 이메일]
 발신자: ${email.sender}
 제목: ${email.subject}
 카테고리: ${email.category}
-내용: ${email.body?.slice(0, 2000)}
+본문:
+${email.body?.slice(0, 3000)}
 
-카테고리별 답변 규칙:
-- 자료대응: "요청하신 자료를 첨부하여 드립니다." 포함
-- 발주내역: "발주서 접수 확인하였습니다. 재고 및 납기 확인 후 안내드리겠습니다." 포함
-- 정보수집/필터링: "답변이 필요하지 않은 메일입니다."로 간략히
+[카테고리별 핵심 메시지]
+- 자료대응: 요청 자료의 종류를 구체적으로 언급하며 "요청하신 자료를 첨부하여 송부드립니다. 추가 자료가 필요하시면 말씀 부탁드립니다." 포함
+- 성적서대응: 해당 제품·성적서를 특정하여 "검토 확인 완료하였습니다." 포함, 후속 절차 안내
+- 발주관리: 발주 품목을 특정하여 "발주서 정상 접수 확인하였습니다. 재고 현황 및 납기 일정 확인 후 신속히 안내드리겠습니다." 포함
+- 필터링: "해당 메일은 별도 회신이 필요하지 않은 것으로 판단됩니다." 로 간략 작성
 
-[답신 안전 규칙 - 반드시 준수]
-- 견적서, 단가, 가격, 할인율 등 금액 정보를 절대 포함하지 마세요. "검토 후 별도 안내드리겠습니다." 로 대체
-- 확정되지 않은 납기, 재고, 생산 일정을 기재하지 마세요. "확인 후 안내드리겠습니다." 로 대체
-- 계약 효력이 있는 약속 문구(보장합니다, 약속드립니다)를 사용하지 마세요
-- 사내 기밀(원가, 마진율) 및 첨부파일 내용을 추측하여 기재하지 마세요`;
+[답신 안전 규칙 — 반드시 준수]
+- 견적, 단가, 가격, 할인율 등 금액 정보 절대 불포함 → "검토 후 별도 안내드리겠습니다."로 대체
+- 미확정 납기, 재고량, 생산 일정 기재 금지 → "확인 후 안내드리겠습니다."로 대체
+- 계약적 구속력 문구(보장합니다, 약속드립니다) 사용 금지
+- 사내 기밀(원가, 마진율, 내부 메모) 및 첨부파일 내용 추측 기재 금지`;
 
   let draft = await askAIDraft(c.env, prompt, undefined, 1024);
 
@@ -847,7 +1079,7 @@ emailsRouter.post("/reclassify-all", async (c) => {
   const db = drizzle(c.env.DB);
 
   const allEmails = await db
-    .select({ id: emails.id, sender: emails.sender, subject: emails.subject, body: emails.body })
+    .select({ id: emails.id, sender: emails.sender, recipient: emails.recipient, subject: emails.subject, body: emails.body })
     .from(emails)
     .orderBy(desc(emails.receivedAt));
 
@@ -856,11 +1088,29 @@ emailsRouter.post("/reclassify-all", async (c) => {
 
   for (const email of allEmails) {
     try {
+      // 보낸메일(kpros.kr 발신)은 AI 분류 스킵
+      const isOurMail = /kpros\.kr/i.test(email.sender || "");
+      if (isOurMail) {
+        const sentSummary = JSON.stringify({
+          code: "-", summary: `KPROS에서 발송한 메일`, importance: "하",
+          action_items: "", search_keywords: [], director_report: "당사 발송 메일 - 별도 조치 불필요",
+          needs_approval: false, company_name: "KPROS(자사)", sender_info: email.sender || "",
+          estimated_revenue: "", note: "보낸메일", direction: "outbound", request_type: "outbound",
+        });
+        await db.update(emails).set({
+          category: "필터링" as any, priority: "low" as any, status: "sent",
+          aiSummary: sentSummary, aiConfidence: 100,
+        }).where(eq(emails.id, email.id));
+        processed++;
+        continue;
+      }
+
       const classification = await classifyEmailAdvanced(
         c.env,
         email.sender || "",
         email.subject || "",
-        email.body || ""
+        email.body || "",
+        email.recipient || ""
       );
       const jsonMatch = classification.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -877,6 +1127,8 @@ emailsRouter.post("/reclassify-all", async (c) => {
           sender_info: p.sender_info || "",
           estimated_revenue: p.estimated_revenue || "",
           note: p.note || "",
+          direction: p.direction || "inbound",
+          request_type: p.request_type || "",
         });
 
         await db
@@ -1076,6 +1328,39 @@ emailsRouter.post("/:id/analyze-attachments", async (c) => {
     analyzed,
     failed,
     results,
+  });
+});
+
+/**
+ * POST /emails/fix-dates - 기존 이메일의 receivedAt을 ISO 형식으로 일괄 변환
+ */
+emailsRouter.post("/fix-dates", async (c) => {
+  const db = drizzle(c.env.DB);
+
+  const allEmails = await db
+    .select({ id: emails.id, receivedAt: emails.receivedAt })
+    .from(emails);
+
+  let fixed = 0;
+  for (const email of allEmails) {
+    if (!email.receivedAt) continue;
+    // 이미 ISO 형식이면 스킵
+    if (/^\d{4}-\d{2}-\d{2}T/.test(email.receivedAt)) continue;
+
+    const normalized = normalizeDate(email.receivedAt, new Date().toISOString());
+    if (normalized !== email.receivedAt) {
+      await db.update(emails)
+        .set({ receivedAt: normalized })
+        .where(eq(emails.id, email.id));
+      fixed++;
+    }
+  }
+
+  return c.json({
+    status: "success",
+    message: `${fixed}건의 날짜 형식을 ISO로 변환 완료 (전체 ${allEmails.length}건)`,
+    fixed,
+    total: allEmails.length,
   });
 });
 

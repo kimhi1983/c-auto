@@ -14,10 +14,16 @@ interface User {
   is_active: boolean;
 }
 
-const NAV_ITEMS = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: string;
+  adminOnly?: boolean;
+}
+
+const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: '대시보드', icon: 'home' },
   { href: '/emails', label: '이메일', icon: 'mail' },
-  { href: '/ai-docs', label: 'AI 문서', icon: 'sparkles' },
   { href: '/archives', label: '리포트', icon: 'archive' },
   { href: '/inventory', label: '재고 관리', icon: 'box' },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
@@ -80,7 +86,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
   useEffect(() => {
     const fetchUser = async () => {
       const token = localStorage.getItem('access_token');
@@ -113,17 +118,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push('/login');
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-[3px] border-brand-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-slate-500 font-medium">로딩 중...</span>
-        </div>
-      </div>
-    );
-  }
-
   const filteredNav = NAV_ITEMS.filter(
     (item) => !item.adminOnly || user?.role === 'admin'
   );
@@ -136,6 +130,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   };
 
   const currentPageLabel = filteredNav.find((item) => pathname?.startsWith(item.href))?.label || '대시보드';
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-[3px] border-brand-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm text-slate-500 font-medium">로딩 중...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
@@ -186,6 +191,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
           {filteredNav.map((item) => {
             const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href));
+
             return (
               <Link
                 key={item.href}

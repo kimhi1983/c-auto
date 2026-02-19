@@ -151,6 +151,16 @@ export default function ArchivesPage() {
     setTimeout(() => setMessage(''), 3000);
   };
 
+  const deleteReport = async (e: React.MouseEvent, reportId: number) => {
+    e.stopPropagation();
+    if (!confirm('이 리포트를 삭제하시겠습니까?')) return;
+    try {
+      const res = await fetch(apiUrl(`/api/v1/archives/reports/${reportId}`), { method: 'DELETE', headers: getAuthHeaders() });
+      if (res.ok) { setMessage('리포트 삭제 완료'); loadReports(); } else { setMessage('리포트 삭제 실패'); }
+    } catch { setMessage('리포트 삭제 오류'); }
+    setTimeout(() => setMessage(''), 3000);
+  };
+
   const generateReport = async (type: string) => {
     setGenerating(true); setMessage('');
     try {
@@ -345,7 +355,12 @@ export default function ArchivesPage() {
                   </div>
                   <div className="text-sm font-semibold text-slate-900">{r.file_name}</div>
                 </div>
-                <div className="text-xs text-slate-400">{formatDate(r.report_date)}</div>
+                <div className="flex items-center gap-3">
+                  <div className="text-xs text-slate-400">{formatDate(r.report_date)}</div>
+                  <button onClick={(e) => deleteReport(e, r.id)} className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition" title="삭제">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
               </div>
             </div>
           ))}
