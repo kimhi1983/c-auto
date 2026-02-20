@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { apiUrl } from '@/lib/api';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 
-interface CpoPrice {
+interface PriceData {
   date: string;
   close: number;
   open: number;
@@ -13,13 +13,14 @@ interface CpoPrice {
   volume: number | null;
 }
 
-interface CpoData {
+interface CommodityData {
   ticker: string;
   name: string;
   currency: string;
   exchange: string;
+  unit: string;
   range: string;
-  prices: CpoPrice[];
+  prices: PriceData[];
   current_price: number;
   previous_close: number | null;
   fifty_two_week_high: number | null;
@@ -34,8 +35,8 @@ const RANGE_OPTIONS = [
   { value: '1y', label: '1년' },
 ];
 
-export default function PalmOilPage() {
-  const [data, setData] = useState<CpoData | null>(null);
+export default function WtiPage() {
+  const [data, setData] = useState<CommodityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState('6mo');
   const [error, setError] = useState('');
@@ -45,7 +46,7 @@ export default function PalmOilPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(apiUrl(`/api/v1/commodity-prices/current?range=${selectedRange}&interval=1d`));
+      const res = await fetch(apiUrl(`/api/v1/commodity-prices/wti?range=${selectedRange}&interval=1d`));
       if (res.ok) {
         const json = await res.json();
         if (json.status === 'success') {
@@ -71,7 +72,6 @@ export default function PalmOilPage() {
       .catch(() => {});
   }, []);
 
-  // 가격 변동 계산
   const priceChange = data && data.previous_close
     ? data.current_price - data.previous_close
     : null;
@@ -79,11 +79,9 @@ export default function PalmOilPage() {
     ? (priceChange / data.previous_close) * 100
     : null;
 
-  // 기간 내 최고/최저
   const periodHigh = data ? Math.max(...data.prices.map(p => p.close)) : 0;
   const periodLow = data ? Math.min(...data.prices.map(p => p.close)) : 0;
 
-  // 차트 색상 결정
   const isUp = priceChange !== null ? priceChange >= 0 : true;
   const chartColor = isUp ? '#10b981' : '#ef4444';
 
@@ -94,17 +92,17 @@ export default function PalmOilPage() {
         <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
           <span>원료 정보</span>
           <span className="text-slate-300">/</span>
-          <span className="text-slate-700 font-medium">팜오일</span>
+          <span className="text-slate-700 font-medium">원유 (WTI)</span>
         </div>
-        <h1 className="text-2xl font-bold text-slate-900">팜오일 시세</h1>
-        <p className="text-sm text-slate-500 mt-1">말레이시아 원유 팜유 (CPO) · CME 선물 · USD/톤</p>
+        <h1 className="text-2xl font-bold text-slate-900">원유 (WTI) 시세</h1>
+        <p className="text-sm text-slate-500 mt-1">WTI 원유 선물 (CL=F) · NYMEX · USD/배럴</p>
       </div>
 
       {/* 현재가 카드 */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-6 animate-fadeInUp">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">CPO=F · CME</div>
+            <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">CL=F · NYMEX</div>
             {loading ? (
               <div className="skeleton w-48 h-12 rounded-xl" />
             ) : data ? (
@@ -172,7 +170,7 @@ export default function PalmOilPage() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={data.prices}>
                 <defs>
-                  <linearGradient id="colorClose" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="colorWti" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={chartColor} stopOpacity={0.15} />
                     <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
                   </linearGradient>
@@ -216,7 +214,7 @@ export default function PalmOilPage() {
                   dataKey="close"
                   stroke={chartColor}
                   strokeWidth={2}
-                  fill="url(#colorClose)"
+                  fill="url(#colorWti)"
                   dot={false}
                   activeDot={{ r: 5, fill: chartColor, stroke: '#fff', strokeWidth: 2 }}
                 />

@@ -33,6 +33,10 @@ const NAV_ITEMS: NavItem[] = [
     icon: 'flask',
     children: [
       { href: '/materials/palm-oil', label: '팜오일' },
+      { href: '/materials/naphtha', label: '납사' },
+      { href: '/materials/wti', label: '원유 (WTI)' },
+      { href: '/materials/silicon-metal', label: '메탈 실리콘' },
+      { href: '/materials/dmc', label: 'DMC' },
     ],
   },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
