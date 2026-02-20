@@ -33,6 +33,10 @@ export interface Env {
   ECOUNT_USER_ID?: string;       // 사용자 ID
   ECOUNT_API_CERT_KEY?: string;  // API 인증키
 
+  // KPROS ERP (kpros.erns.co.kr)
+  KPROS_USER_ID?: string;        // KPROS 로그인 ID
+  KPROS_PASSWORD?: string;       // KPROS 로그인 비밀번호
+
   // Vars
   ENVIRONMENT: string;
   JWT_EXPIRE_MINUTES: string;

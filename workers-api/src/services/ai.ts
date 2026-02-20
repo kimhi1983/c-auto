@@ -19,6 +19,7 @@ import type { Env } from "../types";
 // ─── Model IDs ───
 
 const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_PRO_MODEL = "gemini-2.5-pro";
 const WORKERS_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct";
 
 // ─── Provider: Gemini Flash ───
@@ -54,6 +55,45 @@ async function callGemini(
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Gemini API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as any;
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// ─── Provider: Gemini 2.5 Pro (최고등급 분석) ───
+
+async function callGeminiPro(
+  apiKey: string,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 8192,
+  temperature = 0.3
+): Promise<string> {
+  const body: Record<string, unknown> = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      temperature,
+    },
+  };
+
+  if (systemPrompt) {
+    body.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_PRO_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini Pro API error (${res.status}): ${err}`);
   }
 
   const data = (await res.json()) as any;
@@ -419,6 +459,31 @@ export async function askAIAnalyze(
 }
 
 /**
+ * 심층 분석 → Gemini 2.5 Pro (판매분석, 안전재고 계획)
+ * 폴백: Pro → Flash → Workers AI
+ */
+export async function askAIAnalyzePro(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 8192
+): Promise<string> {
+  if (env.GEMINI_API_KEY) {
+    try {
+      return await callGeminiPro(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens);
+    } catch (e) {
+      console.error("[AI] Gemini Pro failed, falling back to Flash:", e);
+      try {
+        return await callGemini(env.GEMINI_API_KEY, prompt, systemPrompt, Math.min(maxTokens, 4096));
+      } catch (e2) {
+        console.error("[AI] Gemini Flash also failed, falling back to Workers AI:", e2);
+      }
+    }
+  }
+  return callWorkersAI(env.AI, prompt, systemPrompt, Math.min(maxTokens, 2048));
+}
+
+/**
  * 시장 조사 → Gemini + Google Search (실시간 웹 검색 기반)
  * Gemini API 키가 없으면 일반 AI로 폴백
  */
@@ -602,6 +667,11 @@ export function getAIEngineStatus(env: Env): {
       {
         role: "문서 작성/답변 초안",
         engine: gemini ? "Gemini Flash" : "Workers AI (Llama)",
+        status: gemini ? "active" : "fallback",
+      },
+      {
+        role: "판매분석/안전재고",
+        engine: gemini ? "Gemini 2.5 Pro" : "Workers AI (Llama)",
         status: gemini ? "active" : "fallback",
       },
     ],

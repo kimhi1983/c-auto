@@ -7,17 +7,46 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, desc, like, count } from "drizzle-orm";
 import { inventoryItems, inventoryTransactions, dailyReports } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
-import { askAIAnalyze } from "../services/ai";
+import { askAIAnalyze, askAIAnalyzePro } from "../services/ai";
 import {
   getERPStatus,
   getInventory as getEcountInventory,
   getSales as getEcountSales,
 } from "../services/ecount";
+import { isKprosConfigured, getKprosStock } from "../services/kpros";
 import type { Env } from "../types";
 
 const inventory = new Hono<{ Bindings: Env }>();
 
 inventory.use("*", authMiddleware);
+
+/**
+ * GET /inventory/kpros-stock - KPROS ERP 실시간 재고 현황
+ */
+inventory.get("/kpros-stock", async (c) => {
+  if (!isKprosConfigured(c.env)) {
+    return c.json({ status: "error", message: "KPROS 인증 정보 미설정", configured: false }, 400);
+  }
+  const forceRefresh = c.req.query("refresh") === "true";
+  try {
+    const data = await getKprosStock(c.env, forceRefresh);
+    return c.json({ status: "success", data });
+  } catch (e: any) {
+    // 오류 시 캐시 데이터 반환 시도
+    if (c.env.CACHE) {
+      const stale = await c.env.CACHE.get("kpros:stock_data", "json");
+      if (stale) return c.json({ status: "success", data: stale, stale: true });
+    }
+    return c.json({ status: "error", message: e.message }, 500);
+  }
+});
+
+/**
+ * GET /inventory/kpros-status - KPROS 연동 상태
+ */
+inventory.get("/kpros-status", async (c) => {
+  return c.json({ status: "success", data: { configured: isKprosConfigured(c.env) } });
+});
 
 /**
  * GET /inventory - 재고 목록
@@ -1134,6 +1163,342 @@ ${aiData}
       analyzed_at: new Date().toISOString(),
     },
     message: "스마트 재고 분석 완료",
+  });
+});
+
+// ═══════════════════════════════════════════════
+// 판매현황 분석 + 안전재고 계획 (Gemini 2.5 Pro)
+// ═══════════════════════════════════════════════
+
+interface SalesRow {
+  date: string;
+  customer: string;
+  productCode?: string;
+  productName: string;
+  quantity: number;
+  unitPrice?: number;
+  amount: number;
+}
+
+function findKprosMatch(
+  salesProductName: string,
+  kprosItems: { productNm: string; sumStockQty: number; warehouseNm: string }[]
+): { productNm: string; sumStockQty: number; warehouseNm: string } | null {
+  const normalized = salesProductName.trim().toLowerCase();
+  // 1) 정확 일치
+  let match = kprosItems.find(k => k.productNm.trim().toLowerCase() === normalized);
+  if (match) return match;
+  // 2) 포함 일치
+  match = kprosItems.find(k =>
+    k.productNm.toLowerCase().includes(normalized) ||
+    normalized.includes(k.productNm.toLowerCase())
+  );
+  if (match) return match;
+  // 3) 토큰 유사도 (70% 이상)
+  const salesTokens = normalized.split(/[\s,./()%-]+/).filter(Boolean);
+  let bestScore = 0;
+  let bestMatch: typeof match = null;
+  for (const k of kprosItems) {
+    const kTokens = k.productNm.toLowerCase().split(/[\s,./()%-]+/).filter(Boolean);
+    const overlap = salesTokens.filter(t => kTokens.some(kt => kt.includes(t) || t.includes(kt))).length;
+    const score = overlap / Math.max(salesTokens.length, kTokens.length);
+    if (score > 0.7 && score > bestScore) {
+      bestScore = score;
+      bestMatch = k;
+    }
+  }
+  return bestMatch || null;
+}
+
+/**
+ * POST /inventory/sales-analyze - 판매현황 분석 + 안전재고 계획
+ * 판매 엑셀 데이터 + KPROS 실시간 재고 교차 분석 (Gemini 2.5 Pro)
+ */
+inventory.post("/sales-analyze", async (c) => {
+  const body = await c.req.json<{
+    salesData: SalesRow[];
+    leadTimeDays?: number;
+    serviceLevel?: number;
+  }>();
+
+  const { salesData, leadTimeDays = 14, serviceLevel = 95 } = body;
+
+  if (!salesData || salesData.length === 0) {
+    return c.json({ status: "error", message: "판매 데이터가 필요합니다" }, 400);
+  }
+
+  // Z-score 매핑 (서비스레벨 → Z)
+  const zMap: Record<number, number> = { 90: 1.28, 95: 1.65, 97: 1.88, 99: 2.33 };
+  const Z = zMap[serviceLevel] || 1.65;
+
+  // ── 1. KPROS 재고 조회 (교차 참조용) ──
+  let kprosItems: { productNm: string; sumStockQty: number; warehouseNm: string }[] = [];
+  let kprosDataAvailable = false;
+  try {
+    if (isKprosConfigured(c.env)) {
+      const kprosData = await getKprosStock(c.env);
+      // 같은 품목 여러 창고 → 합산
+      const stockMap = new Map<string, number>();
+      for (const item of kprosData.items) {
+        const name = item.productNm;
+        stockMap.set(name, (stockMap.get(name) || 0) + item.sumStockQty);
+      }
+      kprosItems = Array.from(stockMap.entries()).map(([productNm, sumStockQty]) => ({
+        productNm,
+        sumStockQty,
+        warehouseNm: kprosData.items.find(i => i.productNm === productNm)?.warehouseNm || '',
+      }));
+      kprosDataAvailable = true;
+    }
+  } catch (e) {
+    console.error("[Sales Analyze] KPROS 재고 조회 실패:", e);
+  }
+
+  // ── 2. 판매 데이터 집계 ──
+  const dates = salesData.map(r => r.date).filter(Boolean).sort();
+  const periodFrom = dates[0] || '';
+  const periodTo = dates[dates.length - 1] || '';
+  const uniqueMonths = new Set(salesData.map(r => r.date?.substring(0, 7)).filter(Boolean));
+  const monthCount = Math.max(uniqueMonths.size, 1);
+
+  const totalSalesAmount = salesData.reduce((s, r) => s + (r.amount || 0), 0);
+  const totalQuantity = salesData.reduce((s, r) => s + (r.quantity || 0), 0);
+  const uniqueProducts = new Set(salesData.map(r => r.productName).filter(Boolean));
+  const uniqueCustomers = new Set(salesData.map(r => r.customer).filter(Boolean));
+
+  // ── 3. 월별 추이 ──
+  const monthlyMap = new Map<string, { totalQty: number; totalAmount: number; products: Set<string> }>();
+  for (const row of salesData) {
+    const month = row.date?.substring(0, 7);
+    if (!month) continue;
+    const m = monthlyMap.get(month) || { totalQty: 0, totalAmount: 0, products: new Set<string>() };
+    m.totalQty += row.quantity || 0;
+    m.totalAmount += row.amount || 0;
+    if (row.productName) m.products.add(row.productName);
+    monthlyMap.set(month, m);
+  }
+  const monthlyTrend = Array.from(monthlyMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, d]) => ({ month, totalQty: d.totalQty, totalAmount: d.totalAmount, productCount: d.products.size }));
+
+  // ── 4. 품목별 집계 ──
+  const prodMap = new Map<string, {
+    totalQty: number; totalAmount: number; customers: Set<string>;
+    monthlyQtys: Map<string, number>;
+  }>();
+  for (const row of salesData) {
+    const name = row.productName;
+    if (!name) continue;
+    const p = prodMap.get(name) || { totalQty: 0, totalAmount: 0, customers: new Set(), monthlyQtys: new Map() };
+    p.totalQty += row.quantity || 0;
+    p.totalAmount += row.amount || 0;
+    if (row.customer) p.customers.add(row.customer);
+    const month = row.date?.substring(0, 7) || '';
+    if (month) p.monthlyQtys.set(month, (p.monthlyQtys.get(month) || 0) + (row.quantity || 0));
+    prodMap.set(name, p);
+  }
+
+  const productRanking = Array.from(prodMap.entries())
+    .map(([name, d]) => ({
+      rank: 0,
+      productName: name,
+      totalQty: d.totalQty,
+      totalAmount: d.totalAmount,
+      customerCount: d.customers.size,
+      avgMonthlyQty: Math.round(d.totalQty / monthCount),
+      salesMonths: d.monthlyQtys.size,
+    }))
+    .sort((a, b) => b.totalAmount - a.totalAmount);
+  productRanking.forEach((p, i) => { p.rank = i + 1; });
+
+  // ── 5. 재고 교차분석 + 안전재고 ──
+  const inventoryCrossRef = productRanking.map(prod => {
+    const kprosMatch = findKprosMatch(prod.productName, kprosItems);
+    const currentStock = kprosMatch ? kprosMatch.sumStockQty : null;
+    const avgMonthlySales = prod.avgMonthlyQty;
+
+    // 월별 표준편차
+    const monthlyData = prodMap.get(prod.productName)!.monthlyQtys;
+    const monthlyVals = Array.from(monthlyData.values());
+    const mean = monthlyVals.reduce((s, v) => s + v, 0) / Math.max(monthlyVals.length, 1);
+    const variance = monthlyVals.reduce((s, v) => s + (v - mean) ** 2, 0) / Math.max(monthlyVals.length, 1);
+    const stdDev = Math.sqrt(variance);
+
+    // 안전재고 = Z × σ × √(L/30)
+    const safetyStock = Math.round(Z * stdDev * Math.sqrt(leadTimeDays / 30));
+    // ROP = 월평균 × (L/30) + 안전재고
+    const reorderPoint = Math.round(avgMonthlySales * (leadTimeDays / 30) + safetyStock);
+
+    const monthsOfSupply = (currentStock !== null && avgMonthlySales > 0)
+      ? Math.round((currentStock / avgMonthlySales) * 10) / 10
+      : null;
+
+    let status: 'urgent' | 'warning' | 'normal' | 'excess' | 'no_stock_data' = 'no_stock_data';
+    if (monthsOfSupply !== null) {
+      if (monthsOfSupply <= 1) status = 'urgent';
+      else if (monthsOfSupply <= 2) status = 'warning';
+      else if (monthsOfSupply >= 6) status = 'excess';
+      else status = 'normal';
+    }
+
+    const recommendedOrder = (currentStock !== null && currentStock < reorderPoint)
+      ? reorderPoint - currentStock + safetyStock
+      : 0;
+
+    return {
+      productName: prod.productName,
+      salesQty: prod.totalQty,
+      avgMonthlySales,
+      currentStock,
+      monthsOfSupply,
+      safetyStock,
+      reorderPoint,
+      status,
+      recommendedOrder,
+    };
+  });
+
+  const safetyStockSummary = {
+    urgentCount: inventoryCrossRef.filter(i => i.status === 'urgent').length,
+    warningCount: inventoryCrossRef.filter(i => i.status === 'warning').length,
+    normalCount: inventoryCrossRef.filter(i => i.status === 'normal').length,
+    excessCount: inventoryCrossRef.filter(i => i.status === 'excess').length,
+    noDataCount: inventoryCrossRef.filter(i => i.status === 'no_stock_data').length,
+    totalRecommendedOrderValue: inventoryCrossRef.reduce((s, i) => s + i.recommendedOrder, 0),
+  };
+
+  // ── 6. 거래처 분석 ──
+  const custMap = new Map<string, { totalAmount: number; totalQty: number; products: Set<string>; orders: number }>();
+  for (const row of salesData) {
+    const cust = row.customer;
+    if (!cust) continue;
+    const c2 = custMap.get(cust) || { totalAmount: 0, totalQty: 0, products: new Set(), orders: 0 };
+    c2.totalAmount += row.amount || 0;
+    c2.totalQty += row.quantity || 0;
+    if (row.productName) c2.products.add(row.productName);
+    c2.orders++;
+    custMap.set(cust, c2);
+  }
+  const customerAnalysis = Array.from(custMap.entries())
+    .map(([customer, d]) => ({
+      customer,
+      totalAmount: d.totalAmount,
+      totalQty: d.totalQty,
+      productCount: d.products.size,
+      orderCount: d.orders,
+    }))
+    .sort((a, b) => b.totalAmount - a.totalAmount);
+
+  // ── 7. AI 분석 (Gemini 2.5 Pro) ──
+  const urgentItems = inventoryCrossRef.filter(i => i.status === 'urgent');
+  const warningItems = inventoryCrossRef.filter(i => i.status === 'warning');
+  const excessItems = inventoryCrossRef.filter(i => i.status === 'excess');
+  const top10Products = productRanking.slice(0, 10);
+  const top10Customers = customerAnalysis.slice(0, 10);
+
+  const systemPrompt = `당신은 KPROS(화학/화장품 원료 전문 무역기업)의 재고관리 팀장입니다.
+판매 데이터와 실시간 재고 데이터를 교차 분석하여 경영진에게 보고하는 전문가 보고서를 작성합니다.
+
+[역할]
+- 재고관리 팀장으로서 안전재고 유지, 발주 계획, 재고 최적화를 책임집니다
+- 데이터에 기반한 정량적 분석을 우선합니다
+- 경영진이 의사결정에 활용할 수 있는 구체적 제안을 제시합니다
+
+[전문 분야]
+- 화학/화장품 원료 특성을 반영한 재고관리 (유통기한, 보관조건, 최소발주량 고려)
+- ABC 분석, 안전재고 산출, 발주점(ROP) 관리
+- 수요 예측 및 계절성 분석
+- 공급망 리스크 관리`;
+
+  const monthlyTrendStr = monthlyTrend.map(m =>
+    `  ${m.month}: 수량 ${m.totalQty.toLocaleString()}, 금액 ₩${m.totalAmount.toLocaleString()}, 품목 ${m.productCount}개`
+  ).join('\n');
+
+  const top10Str = top10Products.map(p =>
+    `  ${p.rank}. ${p.productName} - 수량 ${p.totalQty.toLocaleString()}, 금액 ₩${p.totalAmount.toLocaleString()}, 월평균 ${p.avgMonthlyQty.toLocaleString()}, 거래처 ${p.customerCount}개`
+  ).join('\n');
+
+  const urgentStr = urgentItems.length > 0
+    ? urgentItems.slice(0, 10).map(i => `  - ${i.productName}: 현재고 ${i.currentStock?.toLocaleString() ?? '?'}, 월평균판매 ${i.avgMonthlySales.toLocaleString()}, 재고월수 ${i.monthsOfSupply ?? '?'}개월`).join('\n')
+    : '  없음';
+
+  const excessStr = excessItems.length > 0
+    ? excessItems.slice(0, 10).map(i => `  - ${i.productName}: 현재고 ${i.currentStock?.toLocaleString() ?? '?'}, 월평균판매 ${i.avgMonthlySales.toLocaleString()}, 재고월수 ${i.monthsOfSupply ?? '?'}개월`).join('\n')
+    : '  없음';
+
+  const custStr = top10Customers.map(c2 =>
+    `  - ${c2.customer}: 금액 ₩${c2.totalAmount.toLocaleString()}, 수량 ${c2.totalQty.toLocaleString()}, 품목 ${c2.productCount}개`
+  ).join('\n');
+
+  const aiPrompt = `다음은 KPROS의 판매현황 데이터와 KPROS ERP 실시간 재고를 교차 분석한 결과입니다.
+
+■ 분석 기간: ${periodFrom} ~ ${periodTo} (${monthCount}개월)
+
+■ 판매 개요
+- 총 매출: ₩${totalSalesAmount.toLocaleString()}
+- 총 판매수량: ${totalQuantity.toLocaleString()}
+- 판매 품목: ${uniqueProducts.size}개
+- 거래처: ${uniqueCustomers.size}개
+
+■ 월별 판매 추이
+${monthlyTrendStr}
+
+■ TOP 10 판매 품목
+${top10Str}
+
+■ 재고 교차분석 결과 (KPROS 재고 ${kprosDataAvailable ? '연동 성공' : '미연동'})
+- 긴급 발주 필요 (재고 1개월 미만): ${safetyStockSummary.urgentCount}건
+${urgentStr}
+- 발주 검토 (재고 1~2개월): ${safetyStockSummary.warningCount}건
+- 양호: ${safetyStockSummary.normalCount}건
+- 과잉 재고 (6개월 이상): ${safetyStockSummary.excessCount}건
+${excessStr}
+- KPROS 재고 미확인: ${safetyStockSummary.noDataCount}건
+
+■ TOP 10 거래처
+${custStr}
+
+[보고서 작성 요청]
+재고관리 팀장의 관점에서 다음 섹션별로 보고서를 작성하세요:
+
+1. **경영진 요약** - 3~5문장으로 핵심 인사이트와 즉시 조치 사항
+2. **판매 패턴 분석** - 월별 추이 패턴, TOP 품목 집중도, 거래처 의존도
+3. **재고 위험 평가** - 긴급 발주 품목 상세, 과잉재고 처리 방안
+4. **안전재고 계획** - 품목별 권장 안전재고 근거, 발주점(ROP) 기준, 월별 발주 스케줄
+5. **전략적 제안** - 재고 효율화 3가지 과제, 거래처 관리 방안, 1~3개월 액션플랜
+
+[작성 규칙]
+- 금액은 ₩ 표기, 천 단위 콤마 포함
+- 마크다운 형식 (##, **, -, 표)
+- 데이터 기반 정량적 분석 우선
+- 구체적 품목명과 수치 포함`;
+
+  let aiReport = '';
+  try {
+    aiReport = await askAIAnalyzePro(c.env, aiPrompt, systemPrompt, 8192);
+  } catch (e: any) {
+    aiReport = `AI 분석 생성 실패: ${e.message}`;
+  }
+
+  return c.json({
+    status: "success",
+    data: {
+      overview: {
+        totalSalesAmount,
+        totalQuantity,
+        productCount: uniqueProducts.size,
+        customerCount: uniqueCustomers.size,
+        period: { from: periodFrom, to: periodTo, months: monthCount },
+      },
+      monthlyTrend,
+      productRanking: productRanking.slice(0, 20),
+      inventoryCrossRef,
+      safetyStockSummary,
+      customerAnalysis: customerAnalysis.slice(0, 20),
+      aiReport,
+      kprosDataAvailable,
+      analyzedAt: new Date().toISOString(),
+    },
   });
 });
 

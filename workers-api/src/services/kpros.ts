@@ -1,0 +1,226 @@
+/**
+ * KPROS ERP API Client Service
+ * kpros.erns.co.kr 재고 데이터 연동
+ */
+import type { Env } from '../types';
+
+const KPROS_BASE = 'http://kpros.erns.co.kr';
+const KV_SESSION_KEY = 'kpros:session';
+const KV_STOCK_KEY = 'kpros:stock_data';
+const SESSION_TTL = 60 * 25;  // 25분
+const STOCK_CACHE_TTL = 60 * 30; // 30분
+
+export interface KprosStockItem {
+  productIdx: number;
+  warehouseIdx: number;
+  productNm: string;
+  warehouseNm: string;
+  sumStockQty: number;
+  pkgUnitNm: string;
+  manuNmList: string | null;
+  braNmList: string | null;
+}
+
+export interface KprosStockAggregated {
+  items: KprosStockItem[];
+  totalCount: number;
+  totalQty: number;
+  warehouses: { name: string; itemCount: number; totalQty: number }[];
+  brands: { name: string; itemCount: number; totalQty: number }[];
+  zeroStockCount: number;
+  fetchedAt: string;
+}
+
+export function isKprosConfigured(env: Env): boolean {
+  return !!(env.KPROS_USER_ID && env.KPROS_PASSWORD);
+}
+
+/**
+ * KPROS 로그인 → userKey+userInfo 쿠키 문자열 반환
+ */
+async function loginKpros(env: Env): Promise<string> {
+  const res = await fetch(`${KPROS_BASE}/login/doLogin.do`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `userId=${env.KPROS_USER_ID}&userPassword=${env.KPROS_PASSWORD}&userStatus=1`,
+  });
+
+  const body = await res.json() as any;
+  if (body.result !== 'SUCCESS') {
+    throw new Error('KPROS 로그인 실패: ' + (body.returnMessage || ''));
+  }
+
+  // Set-Cookie에서 userKey, userInfo 추출 (값에 base64 =+/ 포함)
+  const allCookies = res.headers.getSetCookie();
+  let userKey = '';
+  let userInfo = '';
+
+  for (const header of allCookies) {
+    const keyMatch = header.match(/^userKey=([^;]+)/);
+    const infoMatch = header.match(/^userInfo=([^;]+)/);
+    if (keyMatch) userKey = keyMatch[1];
+    if (infoMatch) userInfo = infoMatch[1];
+  }
+
+  // getSetCookie가 빈 배열이면 get('Set-Cookie') fallback
+  if (!userKey || !userInfo) {
+    const raw = res.headers.get('Set-Cookie') || '';
+    const keyMatch = raw.match(/userKey=([^;]+)/);
+    const infoMatch = raw.match(/userInfo=([^;]+)/);
+    if (keyMatch) userKey = keyMatch[1];
+    if (infoMatch) userInfo = infoMatch[1];
+  }
+
+  if (!userKey || !userInfo) {
+    throw new Error('KPROS 로그인 성공했으나 인증 쿠키를 받지 못했습니다');
+  }
+
+  return `userKey=${userKey}; userInfo=${userInfo}`;
+}
+
+/**
+ * KV 캐시된 세션 또는 새 로그인
+ */
+async function getSession(env: Env): Promise<string> {
+  if (env.CACHE) {
+    const cached = await env.CACHE.get(KV_SESSION_KEY);
+    if (cached) return cached;
+  }
+
+  const sessionId = await loginKpros(env);
+
+  if (env.CACHE) {
+    await env.CACHE.put(KV_SESSION_KEY, sessionId, { expirationTtl: SESSION_TTL });
+  }
+
+  return sessionId;
+}
+
+/**
+ * 세션 무효화 후 재로그인
+ */
+async function refreshSession(env: Env): Promise<string> {
+  if (env.CACHE) {
+    await env.CACHE.delete(KV_SESSION_KEY);
+  }
+  return getSession(env);
+}
+
+/**
+ * KPROS 재고 목록 API 호출
+ */
+async function fetchStockPage(cookieStr: string, limit: number, offset: number): Promise<{ items: KprosStockItem[]; totalCount: number }> {
+  const res = await fetch(`${KPROS_BASE}/stock/stockPagingList.do`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': cookieStr,
+    },
+    body: `limit=${limit}&offset=${offset}&searchSelect=&searchVal=&sortType=&sesUserAuth=ADMIN&manuBrandIdx=&status=&warehouseIdx=0`,
+  });
+
+  const data = await res.json() as any;
+
+  if (data.result !== 'SUCCESS') {
+    throw new Error('KPROS 재고 조회 실패: ' + (data.returnMessage || ''));
+  }
+
+  return {
+    items: (data.returnData || []) as KprosStockItem[],
+    totalCount: data.totalCount || 0,
+  };
+}
+
+/**
+ * 전체 재고 조회 (페이지네이션 처리)
+ */
+async function fetchAllStock(env: Env): Promise<KprosStockItem[]> {
+  let cookieStr = await getSession(env);
+  const LIMIT = 500;
+
+  // 첫 번째 시도
+  let result = await fetchStockPage(cookieStr, LIMIT, 0);
+
+  // 세션 만료 체크: 데이터가 빈 경우 재로그인 시도
+  if (result.items.length === 0 && result.totalCount === 0) {
+    cookieStr = await refreshSession(env);
+    result = await fetchStockPage(cookieStr, LIMIT, 0);
+  }
+
+  let allItems = [...result.items];
+
+  // 500개 이상이면 추가 페이지 fetch
+  while (allItems.length < result.totalCount) {
+    const page = await fetchStockPage(cookieStr, LIMIT, allItems.length);
+    allItems.push(...page.items);
+    if (page.items.length === 0) break;
+  }
+
+  return allItems;
+}
+
+/**
+ * 재고 데이터 집계
+ */
+function aggregateStock(items: KprosStockItem[]): KprosStockAggregated {
+  const totalQty = items.reduce((sum, i) => sum + (i.sumStockQty || 0), 0);
+  const zeroStockCount = items.filter(i => !i.sumStockQty || i.sumStockQty === 0).length;
+
+  // 창고별 집계
+  const whMap = new Map<string, { itemCount: number; totalQty: number }>();
+  for (const item of items) {
+    const name = item.warehouseNm || '미지정';
+    const curr = whMap.get(name) || { itemCount: 0, totalQty: 0 };
+    curr.itemCount++;
+    curr.totalQty += item.sumStockQty || 0;
+    whMap.set(name, curr);
+  }
+  const warehouses = Array.from(whMap.entries())
+    .map(([name, data]) => ({ name, ...data }))
+    .sort((a, b) => b.totalQty - a.totalQty);
+
+  // 브랜드별 집계
+  const brMap = new Map<string, { itemCount: number; totalQty: number }>();
+  for (const item of items) {
+    const name = item.braNmList || '미지정';
+    const curr = brMap.get(name) || { itemCount: 0, totalQty: 0 };
+    curr.itemCount++;
+    curr.totalQty += item.sumStockQty || 0;
+    brMap.set(name, curr);
+  }
+  const brands = Array.from(brMap.entries())
+    .map(([name, data]) => ({ name, ...data }))
+    .sort((a, b) => b.totalQty - a.totalQty);
+
+  return {
+    items,
+    totalCount: items.length,
+    totalQty,
+    warehouses,
+    brands,
+    zeroStockCount,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * KPROS 재고 데이터 조회 (KV 캐시 포함)
+ */
+export async function getKprosStock(env: Env, forceRefresh = false): Promise<KprosStockAggregated> {
+  // 캐시 확인
+  if (!forceRefresh && env.CACHE) {
+    const cached = await env.CACHE.get(KV_STOCK_KEY, 'json') as KprosStockAggregated | null;
+    if (cached) return cached;
+  }
+
+  // 실시간 조회
+  const items = await fetchAllStock(env);
+  const aggregated = aggregateStock(items);
+
+  // 캐시 저장
+  if (env.CACHE) {
+    await env.CACHE.put(KV_STOCK_KEY, JSON.stringify(aggregated), { expirationTtl: STOCK_CACHE_TTL });
+  }
+
+  return aggregated;
+}
