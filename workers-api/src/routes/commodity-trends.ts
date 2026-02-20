@@ -1,6 +1,6 @@
 /**
  * Commodity Trends AI Report - /api/v1/commodity-trends
- * 5개 원자재 가격 + 환율 + 실시간 뉴스를 종합한 AI 트렌드 보고서
+ * 5개 원자재 가격 + 환율 + AI 전문가 분석
  */
 import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
@@ -12,23 +12,27 @@ const commodityTrends = new Hono<{ Bindings: Env }>();
 
 commodityTrends.use('*', authMiddleware);
 
-interface CommoditySnapshot {
+interface CommodityItem {
+  key: string;
   name: string;
+  label: string;
   currency: string;
+  unit: string;
   current_price: number;
   previous_close: number | null;
-  change_pct: string;
-  recent_prices: string;
+  change_pct: number | null;
+  prices: { date: string; close: number }[];
 }
 
 /**
- * POST /commodity-trends/generate - AI 원료가격트렌드 보고서 생성
+ * POST /commodity-trends/generate - 트렌드 보고서 생성
+ * 구조화된 데이터 + AI 전문가 분석 텍스트 분리 반환
  */
 commodityTrends.post('/generate', async (c) => {
   const today = new Date().toISOString().split('T')[0];
 
   // 5개 원자재 + 환율 병렬 fetch
-  const [palmOil, naphtha, wti, siliconMetal, dmc, exchangeRates] = await Promise.allSettled([
+  const [palmOil, naphtha, wti, siliconMetal, dmc, ratesResult] = await Promise.allSettled([
     fetchYahooFinance('CPO=F', '3mo', '1d'),
     fetchYahooFinance('BZ=F', '3mo', '1d'),
     fetchYahooFinance('CL=F', '3mo', '1d'),
@@ -37,142 +41,95 @@ commodityTrends.post('/generate', async (c) => {
     fetchExchangeRates(),
   ]);
 
-  // 데이터 정리
-  const commodities: CommoditySnapshot[] = [];
+  const commodities: CommodityItem[] = [];
 
-  const addCommodity = (
-    name: string,
-    currency: string,
+  const add = (
+    key: string, name: string, label: string, currency: string, unit: string,
     result: PromiseSettledResult<any>,
   ) => {
     if (result.status === 'fulfilled') {
       const d = result.value;
       const changePct = d.previous_close
-        ? (((d.current_price - d.previous_close) / d.previous_close) * 100).toFixed(2)
-        : 'N/A';
-      const recentPrices = (d.prices || [])
-        .slice(-10)
-        .map((p: any) => `${p.date}: ${p.close}`)
-        .join(', ');
-      commodities.push({
-        name,
-        currency,
-        current_price: d.current_price,
-        previous_close: d.previous_close,
-        change_pct: changePct,
-        recent_prices: recentPrices,
-      });
+        ? parseFloat((((d.current_price - d.previous_close) / d.previous_close) * 100).toFixed(2))
+        : null;
+      const prices = (d.prices || []).slice(-30).map((p: any) => ({
+        date: p.date,
+        close: Math.round(p.close * 100) / 100,
+      }));
+      commodities.push({ key, name, label, currency, unit, current_price: Math.round(d.current_price * 100) / 100, previous_close: d.previous_close ? Math.round(d.previous_close * 100) / 100 : null, change_pct: changePct, prices });
     } else {
-      commodities.push({
-        name,
-        currency,
-        current_price: 0,
-        previous_close: null,
-        change_pct: 'N/A',
-        recent_prices: '데이터 조회 실패',
-      });
+      commodities.push({ key, name, label, currency, unit, current_price: 0, previous_close: null, change_pct: null, prices: [] });
     }
   };
 
-  addCommodity('팜오일 (CPO) · CME 선물 · USD/톤', 'USD', palmOil);
-  addCommodity('납사 (Naphtha) · Brent Crude 기준 · USD/배럴', 'USD', naphtha);
-  addCommodity('원유 WTI · NYMEX 선물 · USD/배럴', 'USD', wti);
-  addCommodity('메탈 실리콘 (Silicon Metal) #441 · CNY/톤', 'CNY', siliconMetal);
-  addCommodity('실리콘 DMC (Dimethylcyclosiloxane) · CNY/톤', 'CNY', dmc);
+  add('palm-oil', '팜오일', 'CPO', 'USD', '톤', palmOil);
+  add('naphtha', '납사', 'Naphtha', 'USD', '배럴', naphtha);
+  add('wti', '원유', 'WTI', 'USD', '배럴', wti);
+  add('silicon-metal', '메탈 실리콘', 'Si-Metal', 'CNY', '톤', siliconMetal);
+  add('dmc', 'DMC', 'DMC', 'CNY', '톤', dmc);
 
-  // 환율 정보
-  let exchangeInfo = '환율 데이터 없음';
-  if (exchangeRates.status === 'fulfilled') {
-    const rates = exchangeRates.value;
-    exchangeInfo = `USD/KRW: ${rates.USD_KRW || 'N/A'}, CNY/KRW: ${rates.CNY_KRW || 'N/A'}, EUR/KRW: ${rates.EUR_KRW || 'N/A'}, JPY/KRW: ${rates.JPY_KRW || 'N/A'}`;
+  // 환율
+  const exchange_rates: Record<string, number> = {};
+  if (ratesResult.status === 'fulfilled') {
+    Object.assign(exchange_rates, ratesResult.value);
   }
 
-  // 원자재 데이터 섹션 구성
-  const commodityDataSection = commodities.map((c) => {
-    const changeLabel = c.change_pct !== 'N/A'
-      ? (parseFloat(c.change_pct) >= 0 ? `▲ +${c.change_pct}%` : `▼ ${c.change_pct}%`)
-      : '변동률 불명';
-    return `### ${c.name}
-- 현재가: ${c.current_price > 0 ? `${c.currency === 'USD' ? '$' : '¥'}${c.current_price.toLocaleString()}` : '조회 실패'}
-- 전일 대비: ${changeLabel}
-- 최근 10일 가격: ${c.recent_prices}`;
-  }).join('\n\n');
+  // AI 분석 - 데이터 나열 없이 인사이트만 요청
+  const dataSummary = commodities.filter(c => c.current_price > 0).map(c => {
+    const sym = c.currency === 'USD' ? '$' : '¥';
+    const chg = c.change_pct !== null ? `${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%` : 'N/A';
+    return `${c.name}(${c.label}): ${sym}${c.current_price} (${chg})`;
+  }).join(' | ');
+
+  const ratesSummary = exchange_rates.USD_KRW
+    ? `USD/KRW ${exchange_rates.USD_KRW}, CNY/KRW ${exchange_rates.CNY_KRW || 'N/A'}`
+    : '환율 미확인';
 
   const prompt = `기준일: ${today}
+현재 시세: ${dataSummary}
+환율: ${ratesSummary}
 
-=== 실시간 원자재 가격 데이터 (5종) ===
-${commodityDataSection}
+위 데이터를 기반으로 전문가 분석을 작성하세요. 데이터 표나 가격 나열은 절대 하지 마세요.
 
-=== 환율 정보 ===
-${exchangeInfo}
+다음 4개 섹션을 각각 작성하세요. 각 섹션은 "## 섹션제목" 헤더로 시작합니다:
 
-위의 실제 가격 데이터를 기반으로, 인터넷에서 최신 뉴스와 리포트를 검색하여 종합적인 **원료가격트렌드 분석 보고서**를 작성하세요.
+## 시장 총평
+전체 원자재 시장의 흐름을 3~4문장으로 요약. 핵심 트렌드와 주요 변동 원인.
 
-[보고서 필수 구조]
-1. **Executive Summary (요약)** - 전체 원자재 시장 흐름을 3~5줄로 요약
-2. **원자재별 상세 분석** - 5개 원자재 각각에 대해:
-   - 현재 가격 및 추세 (실제 데이터 인용)
-   - 가격 변동 원인 분석 (수급, 정책, 국제 이슈)
-   - 마크다운 표로 가격 데이터 정리
-3. **환율 동향 및 원가 영향** - 환율 변동이 원자재 수입 원가에 미치는 영향
-4. **글로벌 시장 뉴스 & 이슈** - 인터넷 검색으로 확인한 최신 뉴스 5~8건 (출처 포함)
-5. **K-뷰티/화장품 원료 시장 영향 분석** - 화장품·올레오케미컬 원료 시장에 미치는 실질적 영향
-6. **향후 전망 & 리스크 요인** - 향후 1~3개월 전망, 주의해야 할 리스크
+## 원자재별 분석
+5개 원자재 각각을 "**원자재명**:" 으로 시작하는 짧은 단락(2~3문장)으로 분석. 가격 변동의 원인, 수급 상황, 주요 이슈. 숫자를 반복하지 말고 원인과 전망에 집중.
 
-[작성 규칙]
-- 전문 애널리스트 수준의 깊이 있는 분석
-- 모든 분석은 한국어로 작성, 업계 용어(CPO, WTI, DMC 등)는 영어 유지
-- 실제 제공된 가격 데이터를 반드시 인용하여 분석
-- 구체적인 수치와 퍼센트 포함
-- 마크다운 형식 (표, 볼드, 리스트 활용)
-- A4 3~4페이지 분량으로 충실하게 작성
-- 보고서 제목은 "KPROS 원료가격트렌드 분석 보고서" + 날짜`;
+## 주요 뉴스
+최근 원자재/화장품 원료 관련 주요 뉴스 3~5건. 각 항목을 "- **제목**: 내용" 형식의 리스트로 작성. 구체적인 뉴스만 포함.
 
-  const systemPrompt = `당신은 세계 최고 수준의 원자재 및 올레오케미컬 시장 수석 애널리스트입니다.
-Goldman Sachs, Morgan Stanley, Bloomberg 급의 전문 분석 역량을 보유하고 있습니다.
+## 전망 및 리스크
+향후 1~3개월 전망. K-뷰티/화장품 원료 기업 관점에서의 시사점과 주의할 리스크 요인. 3~4문장.`;
 
-전문 분야:
-- 팜오일, 납사, 원유 등 에너지·농산물 원자재 시장 분석
-- 실리콘 소재(메탈 실리콘, DMC 등) 중국 시장 동향
-- K-뷰티/화장품 원료 공급망 및 원가 구조
-- 글로벌 매크로 경제와 원자재 시장의 상관관계
+  const systemPrompt = `당신은 글로벌 원자재 시장 수석 애널리스트입니다. 화장품/올레오케미컬 원료 시장 전문가로서 경영진에게 간결하고 날카로운 인사이트를 제공합니다. 모든 내용은 한국어로 작성하되 업계 용어(CPO, WTI, DMC 등)는 영어로 유지합니다. 데이터 표를 만들지 말고 분석과 인사이트에만 집중하세요.`;
 
-분석 원칙:
-1. 데이터 기반의 객관적 분석 (제공된 실제 가격 데이터 활용)
-2. Google Search로 확인한 최신 뉴스와 리포트 반영
-3. 화장품 원료 기업(KPROS) 경영진에게 실무적 인사이트 제공
-4. 단순 나열이 아닌, 원인-결과-전망의 논리적 흐름
-5. 모든 내용은 한국어로 작성`;
-
+  let analysis = '';
   try {
-    const report = await askAIResearch(c.env, prompt, systemPrompt, 8192);
-
-    // KV 캐시에 저장 (24시간)
-    if (c.env.CACHE) {
-      try {
-        await c.env.CACHE.put(
-          `commodity-trends:latest`,
-          JSON.stringify({ content: report, generated_at: new Date().toISOString(), date: today }),
-          { expirationTtl: 86400 },
-        );
-      } catch { /* KV not available */ }
-    }
-
-    return c.json({
-      status: 'success',
-      data: {
-        content: report,
-        generated_at: new Date().toISOString(),
-        date: today,
-        commodities_fetched: commodities.filter(c => c.current_price > 0).length,
-      },
-    });
+    analysis = await askAIResearch(c.env, prompt, systemPrompt, 4096);
   } catch (e: any) {
-    return c.json({
-      status: 'error',
-      message: e.message || 'AI 보고서 생성 실패',
-    }, 500);
+    analysis = `## 시장 총평\n분석 생성에 실패했습니다: ${e.message}`;
   }
+
+  const responseData = {
+    commodities,
+    exchange_rates,
+    analysis,
+    date: today,
+    generated_at: new Date().toISOString(),
+  };
+
+  // KV 캐시 (24시간)
+  if (c.env.CACHE) {
+    try {
+      await c.env.CACHE.put('commodity-trends:latest', JSON.stringify(responseData), { expirationTtl: 86400 });
+    } catch { /* KV not available */ }
+  }
+
+  return c.json({ status: 'success', data: responseData });
 });
 
 /**
@@ -180,15 +137,11 @@ Goldman Sachs, Morgan Stanley, Bloomberg 급의 전문 분석 역량을 보유�
  */
 commodityTrends.get('/latest', async (c) => {
   if (!c.env.CACHE) {
-    return c.json({ status: 'error', message: 'KV 캐시 사용 불가' }, 500);
-  }
-
-  const cached = await c.env.CACHE.get('commodity-trends:latest', 'json') as any;
-  if (!cached) {
     return c.json({ status: 'success', data: null });
   }
 
-  return c.json({ status: 'success', data: cached });
+  const cached = await c.env.CACHE.get('commodity-trends:latest', 'json') as any;
+  return c.json({ status: 'success', data: cached || null });
 });
 
 /**
@@ -199,12 +152,9 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
     'https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&reutersCode=FX_USDKRW,FX_EURKRW,FX_JPYKRW,FX_CNYKRW',
     { headers: { 'User-Agent': 'C-Auto/1.0' } },
   );
-
   if (!res.ok) throw new Error('환율 조회 실패');
-
   const data = (await res.json()) as any;
   const result: Record<string, number> = {};
-
   for (const item of data.result || []) {
     const code = item.reutersCode;
     const price = parseFloat(item.closePrice || item.marketPrice || '0');
@@ -213,7 +163,6 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
     if (code === 'FX_JPYKRW') result.JPY_KRW = price;
     if (code === 'FX_CNYKRW') result.CNY_KRW = price;
   }
-
   return result;
 }
 
