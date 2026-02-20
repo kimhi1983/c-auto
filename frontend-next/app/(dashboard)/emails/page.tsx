@@ -653,14 +653,6 @@ function EmailList({ emails, loading, onSelect }: { emails: EmailItem[]; loading
                 {summary && <span className="text-xs text-slate-400 truncate hidden md:inline">— {summary}</span>}
               </div>
             </div>
-            <span className={`px-2.5 py-1 rounded-full text-xs font-bold shrink-0 ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS['필터링']}`}>
-              {catIcon} {displayCode ? `${displayCode}.` : ''}{displayCat}
-            </span>
-            {ai?.importance && ai.importance !== '하' && (
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${ai.importance === '상' ? 'bg-red-50 text-red-600' : 'bg-yellow-50 text-yellow-600'}`}>
-                {ai.importance === '상' ? '긴급' : '일반'}
-              </span>
-            )}
             <span className={`px-2.5 py-1 rounded-full text-xs font-bold shrink-0 ${statusInfo.color}`}>{statusInfo.label}</span>
             <span className="text-xs text-slate-400 shrink-0 w-28 text-right">{formatDate(email.received_at || email.receivedAt || email.created_at || email.createdAt)}</span>
           </button>
