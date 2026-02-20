@@ -431,9 +431,10 @@ export async function askAIResearch(
   if (env.GEMINI_API_KEY) {
     try {
       return await callGeminiWithSearch(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens);
-    } catch {
-      // Google Search 실패 시 일반 Gemini로 폴백
-      return callGemini(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens, 0.2);
+    } catch (e) {
+      console.error("[AI] Gemini Search failed, falling back to callFast:", e);
+      // Google Search 실패 시 일반 Gemini → Workers AI 폴백 체인
+      return callFast(env, prompt, systemPrompt, maxTokens);
     }
   }
   // Gemini 키 없으면 기존 프리미엄 모델 사용

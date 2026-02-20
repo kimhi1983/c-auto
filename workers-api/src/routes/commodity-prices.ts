@@ -17,7 +17,7 @@ const COMMODITIES: Record<string, { ticker: string; name: string; unit: string }
 /**
  * Yahoo Finance에서 시세 데이터를 가져오는 공통 함수
  */
-async function fetchYahooFinance(
+export async function fetchYahooFinance(
   ticker: string,
   range: string,
   interval: string
@@ -109,7 +109,7 @@ commodityPrices.get("/current", async (c) => {
  * SunSirs 스크래핑 - 메탈 실리콘 등 중국 원자재 가격
  * HTML 테이블에서 날짜/가격 추출
  */
-async function fetchSunSirs(productId: string): Promise<any> {
+export async function fetchSunSirs(productId: string): Promise<any> {
   const headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "text/html",

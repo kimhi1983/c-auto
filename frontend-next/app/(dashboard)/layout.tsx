@@ -37,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
       { href: '/materials/wti', label: '원유 (WTI)' },
       { href: '/materials/silicon-metal', label: '메탈 실리콘' },
       { href: '/materials/dmc', label: 'DMC' },
+      { href: '/materials/trends', label: '원료가격트렌드' },
     ],
   },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
