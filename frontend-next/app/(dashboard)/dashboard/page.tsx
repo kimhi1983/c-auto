@@ -100,7 +100,7 @@ export default function DashboardPage() {
       try {
         const [emailStatsRes, emailListRes, invRes, rateRes, archiveRes, docsRes] = await Promise.allSettled([
           fetch(apiUrl('/api/v1/emails/stats'), { headers: getAuthHeaders() }),
-          fetch(apiUrl('/api/v1/emails/?limit=5'), { headers: getAuthHeaders() }),
+          fetch(apiUrl('/api/v1/emails/?limit=10'), { headers: getAuthHeaders() }),
           fetch(apiUrl('/api/v1/inventory/stats'), { headers: getAuthHeaders() }),
           fetch(apiUrl('/api/v1/exchange-rates/current')),
           fetch(apiUrl('/api/v1/archives/stats'), { headers: getAuthHeaders() }),
@@ -231,12 +231,11 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Exchange Rate + Quick Actions + Recent */}
+      {/* Exchange Rate + Recent Emails */}
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <SkeletonBlock />
-          <SkeletonBlock />
-          <SkeletonBlock />
+          <SkeletonBlock className="lg:col-span-2" />
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -275,21 +274,8 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Quick Actions */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 animate-fadeInUp delay-2">
-            <h3 className="text-base font-bold text-slate-900 mb-4">빠른 실행</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <QuickAction href="/ai-docs" label="AI 문서 작업" desc="서류 작성/분석" icon="💡" />
-              <QuickAction href="/emails" label="이메일 관리" desc="분류 및 승인" icon="📧" />
-              <QuickAction href="/archives" label="아카이브" desc="문서 보관/리포트" icon="🗂️" />
-              <QuickAction href="/files" label="파일 검색" desc="드롭박스 검색" icon="🔍" />
-              <QuickAction href="/inventory" label="재고 관리" desc="입출고 처리" icon="📦" />
-              <QuickAction href="/users" label="사용자 관리" desc="계정 설정" icon="👥" />
-            </div>
-          </div>
-
           {/* Recent Emails */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 animate-fadeInUp delay-3">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 animate-fadeInUp delay-2 lg:col-span-2">
             <h3 className="text-base font-bold text-slate-900 mb-4">최근 이메일</h3>
             {recentEmails.length > 0 ? (
               <div className="space-y-2.5">
@@ -425,15 +411,3 @@ function CurrencyCalculator({ rates }: { rates: ExchangeRate }) {
   );
 }
 
-function QuickAction({ href, label, desc, icon }: { href: string; label: string; desc: string; icon: string }) {
-  return (
-    <a
-      href={href}
-      className="block p-3.5 rounded-xl border border-slate-100 hover:border-brand-200 hover:bg-brand-50/30 transition-all duration-200 group hover:shadow-sm"
-    >
-      <div className="text-lg mb-1">{icon}</div>
-      <div className="text-sm font-bold text-slate-800 group-hover:text-brand-600">{label}</div>
-      <div className="text-xs text-slate-500 mt-0.5">{desc}</div>
-    </a>
-  );
-}
