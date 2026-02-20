@@ -302,11 +302,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="px-3 pb-2">
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 bg-brand-100 rounded-full flex items-center justify-center shrink-0">
-                  <span className="text-brand-700 font-bold text-xs">
-                    {user.full_name?.charAt(0) || 'U'}
-                  </span>
-                </div>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-slate-800 truncate">{user.full_name}</div>
                   <div className="text-xs text-slate-400">{roleLabel[user.role] || user.role}</div>
@@ -353,11 +348,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="hidden sm:block text-right">
               <div className="text-sm font-semibold text-slate-800">{user?.full_name}</div>
               <div className="text-xs text-slate-400">{user?.department || roleLabel[user?.role || ''] || user?.role}</div>
-            </div>
-            <div className="w-9 h-9 bg-gradient-to-br from-brand-100 to-brand-200 rounded-full flex items-center justify-center ring-2 ring-white shadow-sm">
-              <span className="text-brand-700 font-bold text-sm">
-                {user?.full_name?.charAt(0) || 'U'}
-              </span>
             </div>
             <button
               onClick={handleLogout}
