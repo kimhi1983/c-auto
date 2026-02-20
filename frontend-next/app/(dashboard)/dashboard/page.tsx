@@ -169,78 +169,16 @@ export default function DashboardPage() {
         <p className="text-sm text-slate-500 mt-1">C-Auto 스마트 이메일 분석 시스템 현황</p>
       </div>
 
-      {/* Stats Grid */}
-      {loading ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {[...Array(6)].map((_, i) => <SkeletonCard key={i} />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <StatCard
-            title="전체 이메일"
-            value={emailStats?.total || 0}
-            icon="📧"
-            color="text-slate-900"
-            bgColor="bg-blue-50"
-            subtitle={emailStats?.unread ? `미확인 ${emailStats.unread}건` : undefined}
-            delay={1}
-          />
-          <StatCard
-            title="검토/승인 대기"
-            value={(emailStats?.in_review || 0) + (emailStats?.approved || 0)}
-            icon="📋"
-            color="text-orange-600"
-            bgColor="bg-orange-50"
-            subtitle={emailStats?.in_review ? `검토중 ${emailStats.in_review}건` : undefined}
-            delay={2}
-          />
-          <StatCard
-            title="AI 문서"
-            value={recentDocs.length > 0 ? recentDocs.length + '+' : 0}
-            icon="💡"
-            color="text-violet-600"
-            bgColor="bg-violet-50"
-            subtitle="Cowork 수준 서류"
-            delay={3}
-          />
-          <StatCard
-            title="아카이브"
-            value={archiveStats?.total_archives || 0}
-            icon="🗂️"
-            color="text-amber-600"
-            bgColor="bg-amber-50"
-            subtitle={archiveStats?.recent_7days ? `이번 주 ${archiveStats.recent_7days}건` : undefined}
-            delay={4}
-          />
-          <StatCard
-            title="재고 품목"
-            value={inventoryCount}
-            icon="📦"
-            color="text-green-600"
-            bgColor="bg-green-50"
-            delay={5}
-          />
-          <StatCard
-            title="발송 완료"
-            value={emailStats?.sent || 0}
-            icon="✉️"
-            color="text-emerald-600"
-            bgColor="bg-emerald-50"
-            delay={6}
-          />
-        </div>
-      )}
-
       {/* Exchange Rate + Recent Emails */}
       {loading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <SkeletonBlock />
-          <SkeletonBlock className="lg:col-span-2" />
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <SkeletonBlock className="lg:col-span-4" />
+          <SkeletonBlock className="lg:col-span-8" />
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Exchange Rates */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 card-hover animate-fadeInUp delay-1">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 card-hover animate-fadeInUp delay-1 lg:col-span-4">
             <h3 className="text-base font-bold text-slate-900 mb-4">실시간 환율</h3>
             {rates ? (
               <div className="space-y-3">
@@ -275,7 +213,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Recent Emails */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 animate-fadeInUp delay-2 lg:col-span-2">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 animate-fadeInUp delay-2 lg:col-span-8">
             <h3 className="text-base font-bold text-slate-900 mb-4">최근 이메일</h3>
             {recentEmails.length > 0 ? (
               <div className="space-y-2.5">

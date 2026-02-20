@@ -26,31 +26,36 @@ rates.get("/current", async (c) => {
     } catch { /* KV not available */ }
   }
 
-  // 외부 API에서 환율 가져오기
+  // 네이버 금융 API에서 실시간 환율 가져오기
   try {
-    const res = await fetch("https://open.er-api.com/v6/latest/USD");
-    const data = (await res.json()) as any;
+    const [usdRes, cnyRes] = await Promise.all([
+      fetch("https://api.stock.naver.com/marketindex/exchange/FX_USDKRW"),
+      fetch("https://api.stock.naver.com/marketindex/exchange/FX_CNYKRW"),
+    ]);
 
-    if (data.result === "success") {
-      const krwRate = data.rates.KRW;
-      const cnyRate = data.rates.CNY;
-      const cnyToKrw = krwRate / cnyRate;
-      const usdToCny = cnyRate;
+    const usdData = (await usdRes.json()) as any;
+    const cnyData = (await cnyRes.json()) as any;
+
+    if (usdData.exchangeInfo && cnyData.exchangeInfo) {
+      const usdKrw = parseFloat(usdData.exchangeInfo.closePrice.replace(/,/g, ""));
+      const cnyKrw = parseFloat(cnyData.exchangeInfo.closePrice.replace(/,/g, ""));
+      const usdCny = Math.round((usdKrw / cnyKrw) * 100) / 100;
       const today = new Date().toISOString().split("T")[0];
 
       const result = {
-        USD_KRW: Math.round(krwRate * 100) / 100,
-        CNY_KRW: Math.round(cnyToKrw * 100) / 100,
-        USD_CNY: Math.round(usdToCny * 100) / 100,
-        updated_at: new Date().toISOString(),
+        USD_KRW: usdKrw,
+        CNY_KRW: cnyKrw,
+        USD_CNY: usdCny,
+        updated_at: usdData.exchangeInfo.localTradedAt || new Date().toISOString(),
+        source: "naver",
       };
 
       // D1에 저장
       await db
         .insert(exchangeRateHistory)
         .values([
-          { currencyPair: "USD_KRW", rate: krwRate, rateDate: today },
-          { currencyPair: "CNY_KRW", rate: cnyToKrw, rateDate: today },
+          { currencyPair: "USD_KRW", rate: usdKrw, rateDate: today, source: "naver" },
+          { currencyPair: "CNY_KRW", rate: cnyKrw, rateDate: today, source: "naver" },
         ])
         .onConflictDoNothing();
 
@@ -66,7 +71,7 @@ rates.get("/current", async (c) => {
       return c.json({ status: "success", data: result });
     }
   } catch (e) {
-    // API 실패 시 DB에서 최신 데이터
+    // 네이버 API 실패 시 DB에서 최신 데이터
   }
 
   // 폴백: DB에서 최신 환율
