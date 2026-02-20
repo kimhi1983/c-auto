@@ -19,6 +19,7 @@ interface NavItem {
   label: string;
   icon: string;
   adminOnly?: boolean;
+  children?: { href: string; label: string }[];
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -26,6 +27,14 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/emails', label: '이메일', icon: 'mail' },
   { href: '/archives', label: '리포트', icon: 'archive' },
   { href: '/inventory', label: '재고 관리', icon: 'box' },
+  {
+    href: '/materials',
+    label: '원료 정보',
+    icon: 'flask',
+    children: [
+      { href: '/materials/palm-oil', label: '팜오일' },
+    ],
+  },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
 ];
 
@@ -68,6 +77,12 @@ function NavIcon({ icon, className }: { icon: string; className?: string }) {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
         </svg>
       );
+    case 'flask':
+      return (
+        <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 3h6m-5 0v5.172a2 2 0 01-.586 1.414l-3.828 3.828A4 4 0 008.414 21h7.172a4 4 0 002.828-6.586l-3.828-3.828A2 2 0 0114 9.172V3" />
+        </svg>
+      );
     case 'users':
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,6 +101,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   useEffect(() => {
     const fetchUser = async () => {
       const token = localStorage.getItem('access_token');
@@ -129,7 +145,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     viewer: '뷰어',
   };
 
-  const currentPageLabel = filteredNav.find((item) => pathname?.startsWith(item.href))?.label || '대시보드';
+  const currentPageLabel = (() => {
+    for (const item of filteredNav) {
+      if (item.children) {
+        const child = item.children.find(c => pathname === c.href);
+        if (child) return child.label;
+      }
+      if (pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href))) {
+        return item.label;
+      }
+    }
+    return '대시보드';
+  })();
 
   if (loading) {
     return (
@@ -191,6 +218,62 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
           {filteredNav.map((item) => {
             const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href));
+            const hasChildren = item.children && item.children.length > 0;
+            const isExpanded = expandedMenus.includes(item.href) || (hasChildren && pathname?.startsWith(item.href));
+
+            if (hasChildren) {
+              return (
+                <div key={item.href}>
+                  <button
+                    onClick={() => {
+                      setExpandedMenus(prev =>
+                        prev.includes(item.href) ? prev.filter(h => h !== item.href) : [...prev, item.href]
+                      );
+                    }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                      isActive
+                        ? 'bg-brand-50 text-brand-700 shadow-sm shadow-brand-100/50'
+                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                    }`}
+                    title={!sidebarOpen ? item.label : undefined}
+                  >
+                    <NavIcon
+                      icon={item.icon}
+                      className={`w-5 h-5 shrink-0 transition-colors ${isActive ? 'text-brand-600' : ''}`}
+                    />
+                    {sidebarOpen && (
+                      <>
+                        <span className="flex-1 text-left">{item.label}</span>
+                        <svg className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </>
+                    )}
+                  </button>
+                  {sidebarOpen && isExpanded && (
+                    <div className="ml-5 pl-3 border-l border-slate-200 mt-1 space-y-0.5">
+                      {item.children!.map((child) => {
+                        const childActive = pathname === child.href;
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            onClick={() => setMobileMenuOpen(false)}
+                            className={`block px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
+                              childActive
+                                ? 'text-brand-700 font-semibold bg-brand-50/50'
+                                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            {child.label}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
 
             return (
               <Link

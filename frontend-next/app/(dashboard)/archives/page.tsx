@@ -78,74 +78,26 @@ export default function ArchivesPage() {
     setReportLoading(false);
   };
 
-  const downloadReportAsExcel = async (report: ReportData) => {
+  const downloadReportAsPdf = async () => {
     setDownloadingReport(true);
     try {
-      const XLSX = await import('xlsx');
-      const wb = XLSX.utils.book_new();
+      const html2pdf = (await import('html2pdf.js')).default;
+      const element = document.getElementById('report-content');
+      if (!element) throw new Error('리포트 콘텐츠를 찾을 수 없습니다');
 
-      const summaryRows = [
-        ['KPROS 업무 리포트'],
-        ['리포트 유형', report.type_label],
-        ['기간', report.period],
-        ['생성일시', new Date(report.generated_at).toLocaleString('ko-KR')],
-        [],
-        ['전체 이메일', report.overview.total_emails],
-        ['기간 내 이메일', report.overview.period_emails],
-        ['승인 필요', report.overview.approval_needed],
-        ['주요 이메일', report.overview.key_emails_count],
-        [],
-        ['카테고리별 통계'],
-        ['코드', '카테고리', '건수'],
-        ...report.categories.map(c => [c.code, c.name, c.count]),
-        [],
-        ['우선순위별 통계'],
-        ['긴급', report.priorities.high],
-        ['일반', report.priorities.medium],
-        ['낮음', report.priorities.low],
-      ];
-      const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
-      XLSX.utils.book_append_sheet(wb, summarySheet, '요약');
+      const fileName = `KPROS_${selectedReport!.type_label}_리포트_${selectedReport!.period}.pdf`;
+      await html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: fileName,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      } as any).from(element).save();
 
-      if (report.ai_insight) {
-        const insightRows = [['AI 인사이트'], [], [report.ai_insight]];
-        const insightSheet = XLSX.utils.aoa_to_sheet(insightRows);
-        XLSX.utils.book_append_sheet(wb, insightSheet, 'AI 인사이트');
-      }
-
-      if (report.approval_items && report.approval_items.length > 0) {
-        const approvalRows = [
-          ['번호', '카테고리', '제목', '발신자', '회사', '요약'],
-          ...report.approval_items.map((item, i) => [i + 1, item.category || '', item.subject || '', item.sender || '', item.company || '', item.summary || '']),
-        ];
-        const approvalSheet = XLSX.utils.aoa_to_sheet(approvalRows);
-        XLSX.utils.book_append_sheet(wb, approvalSheet, '승인필요');
-      }
-
-      if (report.key_emails && report.key_emails.length > 0) {
-        const keyEmailRows = [
-          ['번호', '카테고리', '우선순위', '제목', '발신자', '회사', '요약'],
-          ...report.key_emails.map((item, i) => [i + 1, item.category || '', item.priority || '', item.subject || '', item.sender || '', item.company || '', item.summary || '']),
-        ];
-        const keyEmailSheet = XLSX.utils.aoa_to_sheet(keyEmailRows);
-        XLSX.utils.book_append_sheet(wb, keyEmailSheet, '주요이메일');
-      }
-
-      if (report.email_details && report.email_details.length > 0) {
-        const detailRows = [
-          ['번호', '수신일시', '카테고리', '코드', '발신자', '회사', '제목', '요약', '우선순위', '상태', '조치사항', '승인필요'],
-          ...report.email_details.map(e => [e.no, e.received_at, e.category, e.code, e.sender, e.company, e.subject, e.summary, e.priority, e.status, e.action_items || '', e.needs_approval ? 'O' : '']),
-        ];
-        const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
-        XLSX.utils.book_append_sheet(wb, detailSheet, '이메일상세');
-      }
-
-      const fileName = `KPROS_${report.type_label}_리포트_${report.period}.xlsx`;
-      XLSX.writeFile(wb, fileName);
-      setMessage('리포트 다운로드 완료');
+      setMessage('PDF 다운로드 완료');
     } catch (err) {
-      console.error('엑셀 생성 오류:', err);
-      setMessage('엑셀 생성 중 오류 발생');
+      console.error('PDF 생성 오류:', err);
+      setMessage('PDF 생성 중 오류 발생');
     }
     setDownloadingReport(false);
     setTimeout(() => setMessage(''), 3000);
@@ -186,11 +138,11 @@ export default function ArchivesPage() {
             </div>
           </div>
           <button
-            onClick={() => downloadReportAsExcel(selectedReport)}
+            onClick={downloadReportAsPdf}
             disabled={downloadingReport}
-            className="px-6 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-semibold hover:from-green-600 hover:to-emerald-600 transition disabled:opacity-50 text-sm"
+            className="px-6 py-2.5 bg-gradient-to-r from-red-500 to-rose-500 text-white rounded-xl font-semibold hover:from-red-600 hover:to-rose-600 transition disabled:opacity-50 text-sm"
           >
-            {downloadingReport ? '다운로드 중...' : 'Excel 다운로드'}
+            {downloadingReport ? '다운로드 중...' : 'PDF 다운로드'}
           </button>
         </div>
 
@@ -199,7 +151,7 @@ export default function ArchivesPage() {
         {reportLoading ? (
           <div className="text-center py-20 text-slate-400 text-sm">불러오는 중...</div>
         ) : (
-          <>
+          <div id="report-content">
             {/* 통계 카드 */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center">
@@ -308,7 +260,7 @@ export default function ArchivesPage() {
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
     );
