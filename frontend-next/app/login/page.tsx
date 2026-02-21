@@ -53,7 +53,7 @@ export default function LoginPage() {
 
       window.location.href = '/dashboard';
     } catch (err: any) {
-      setError(err.message || '이메일 또는 비밀번호가 올바르지 않습니다.');
+      setError(err.message || '아이디 또는 비밀번호가 올바르지 않습니다.');
       setLoading(false);
     }
   };
@@ -79,14 +79,14 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">
-                이메일
+                아이디
               </label>
               <input
-                type="email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-700 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 focus:outline-none transition-all placeholder:text-slate-400"
-                placeholder="이메일을 입력하세요"
+                placeholder="아이디를 입력하세요"
                 required
               />
             </div>

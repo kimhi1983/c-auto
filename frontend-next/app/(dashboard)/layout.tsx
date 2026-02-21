@@ -26,7 +26,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: '대시보드', icon: 'home' },
   { href: '/emails', label: '이메일', icon: 'mail' },
   { href: '/archives', label: '리포트', icon: 'archive' },
-  { href: '/inventory', label: '재고 관리', icon: 'box' },
   {
     href: '/materials',
     label: '원료 정보',
@@ -40,6 +39,8 @@ const NAV_ITEMS: NavItem[] = [
       { href: '/materials/trends', label: '원료가격트렌드' },
     ],
   },
+  { href: '/inventory', label: '재고 관리', icon: 'box' },
+  { href: '/kpros', label: '거래처 관리', icon: 'database' },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
 ];
 
@@ -86,6 +87,12 @@ function NavIcon({ icon, className }: { icon: string; className?: string }) {
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 3h6m-5 0v5.172a2 2 0 01-.586 1.414l-3.828 3.828A4 4 0 008.414 21h7.172a4 4 0 002.828-6.586l-3.828-3.828A2 2 0 0114 9.172V3" />
+        </svg>
+      );
+    case 'database':
+      return (
+        <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
         </svg>
       );
     case 'users':

@@ -1,14 +1,16 @@
 /**
  * KPROS ERP API Client Service
- * kpros.erns.co.kr 재고 데이터 연동
+ * kpros.erns.co.kr 재고/품목/거래처 데이터 연동
  */
 import type { Env } from '../types';
 
 const KPROS_BASE = 'http://kpros.erns.co.kr';
 const KV_SESSION_KEY = 'kpros:session';
 const KV_STOCK_KEY = 'kpros:stock_data';
+const KV_COMPANIES_KEY = 'kpros:companies';
 const SESSION_TTL = 60 * 25;  // 25분
 const STOCK_CACHE_TTL = 60 * 30; // 30분
+const MASTER_CACHE_TTL = 60 * 60; // 1시간 (마스터 데이터)
 
 export interface KprosStockItem {
   productIdx: number;
@@ -223,4 +225,92 @@ export async function getKprosStock(env: Env, forceRefresh = false): Promise<Kpr
   }
 
   return aggregated;
+}
+
+// ═══════════════════════════════════════════
+// 거래처정보 조회
+// ═══════════════════════════════════════════
+
+export interface KprosCompany {
+  companyIdx: number;
+  companyCd: string;
+  companyNm: string;
+  ceoNm: string | null;
+  bizNo: string | null;
+  tel: string | null;
+  fax: string | null;
+  email: string | null;
+  addr: string | null;
+  memo: string | null;
+  managerNm: string | null;
+  managerTel: string | null;
+  managerEmail: string | null;
+  status: string | null;
+}
+
+async function fetchCompanyPage(cookieStr: string, limit: number, offset: number, search?: string): Promise<{ items: KprosCompany[]; totalCount: number }> {
+  const res = await fetch(`${KPROS_BASE}/company/companyPagingList.do`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': cookieStr,
+      'X-Requested-With': 'XMLHttpRequest',
+      'Referer': `${KPROS_BASE}/company/companyList.do?menu=basicInfo`,
+    },
+    body: `paging=Y&limit=${limit}&offset=${offset}&searchSelect=&searchVal=${encodeURIComponent(search || '')}&sellYn=&buyYn=&sortType=&availableYn=`,
+  });
+
+  const text = await res.text();
+
+  // 빈 응답 → KPROS 서버 측 권한 제한 (에러 아닌 빈 결과 반환)
+  if (!text) {
+    console.warn('[KPROS Companies] 빈 응답 — 계정 권한 확인 필요');
+    return { items: [], totalCount: 0 };
+  }
+
+  if (text.startsWith('<!') || text.startsWith('<html')) {
+    throw new Error('KPROS 거래처 조회: 인증 실패 (HTML 응답)');
+  }
+
+  const data = JSON.parse(text);
+  if (data.result !== 'SUCCESS') {
+    throw new Error('KPROS 거래처 조회 실패: ' + (data.returnMessage || JSON.stringify(data)));
+  }
+
+  return {
+    items: (data.returnData || []) as KprosCompany[],
+    totalCount: data.totalCount || 0,
+  };
+}
+
+export async function getKprosCompanies(env: Env, forceRefresh = false, search?: string): Promise<{ items: KprosCompany[]; totalCount: number; fetchedAt: string }> {
+  if (!search && !forceRefresh && env.CACHE) {
+    const cached = await env.CACHE.get(KV_COMPANIES_KEY, 'json') as { items: KprosCompany[]; totalCount: number; fetchedAt: string } | null;
+    if (cached) return cached;
+  }
+
+  let cookieStr = await getSession(env);
+  const LIMIT = 500;
+
+  let result = await fetchCompanyPage(cookieStr, LIMIT, 0, search);
+
+  if (result.items.length === 0 && result.totalCount === 0 && !search) {
+    cookieStr = await refreshSession(env);
+    result = await fetchCompanyPage(cookieStr, LIMIT, 0, search);
+  }
+
+  let allItems = [...result.items];
+  while (allItems.length < result.totalCount) {
+    const page = await fetchCompanyPage(cookieStr, LIMIT, allItems.length, search);
+    allItems.push(...page.items);
+    if (page.items.length === 0) break;
+  }
+
+  const data = { items: allItems, totalCount: allItems.length, fetchedAt: new Date().toISOString() };
+
+  if (!search && env.CACHE) {
+    await env.CACHE.put(KV_COMPANIES_KEY, JSON.stringify(data), { expirationTtl: MASTER_CACHE_TTL });
+  }
+
+  return data;
 }

@@ -164,3 +164,29 @@ export const inventoryTransactions = sqliteTable('inventory_transactions', {
 }, (table) => [
   index('idx_inventory_tx_item').on(table.itemId),
 ]);
+
+// ─── Companies (거래처) ───
+export const companies = sqliteTable('companies', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  companyCd: text('company_cd'),
+  companyNm: text('company_nm').notNull(),
+  ceoNm: text('ceo_nm'),
+  bizNo: text('biz_no'),
+  tel: text('tel'),
+  fax: text('fax'),
+  email: text('email'),
+  addr: text('addr'),
+  memo: text('memo'),
+  managerNm: text('manager_nm'),
+  managerTel: text('manager_tel'),
+  managerEmail: text('manager_email'),
+  companyType: text('company_type'),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  kprosIdx: integer('kpros_idx'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_companies_name').on(table.companyNm),
+  index('idx_companies_cd').on(table.companyCd),
+  index('idx_companies_biz_no').on(table.bizNo),
+]);
