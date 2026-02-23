@@ -40,6 +40,18 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   { href: '/inventory', label: '재고 관리', icon: 'box' },
+  {
+    href: '/logistics',
+    label: '물류 관리',
+    icon: 'truck',
+    children: [
+      { href: '/logistics', label: '대시보드' },
+      { href: '/logistics/purchases', label: '매입등록' },
+      { href: '/logistics/deliveries', label: '납품등록' },
+      { href: '/logistics/warehouse', label: '창고 입출고' },
+      { href: '/logistics/coa', label: '성적서(CoA)' },
+    ],
+  },
   { href: '/kpros', label: '거래처 관리', icon: 'database' },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
 ];
@@ -93,6 +105,12 @@ function NavIcon({ icon, className }: { icon: string; className?: string }) {
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+        </svg>
+      );
+    case 'truck':
+      return (
+        <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
         </svg>
       );
     case 'users':

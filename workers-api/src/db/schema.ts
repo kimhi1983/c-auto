@@ -190,3 +190,169 @@ export const companies = sqliteTable('companies', {
   index('idx_companies_cd').on(table.companyCd),
   index('idx_companies_biz_no').on(table.bizNo),
 ]);
+
+// ═══════════════════════════════════════════
+// KPROS 물류관리 테이블 (7개)
+// ═══════════════════════════════════════════
+
+// ─── 매입등록 (Purchase Orders) ───
+export const kprosPurchases = sqliteTable('kpros_purchases', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kprosIdx: integer('kpros_idx').unique(),
+  productNm: text('product_nm').notNull(),
+  braNm: text('bra_nm'),
+  companyNm: text('company_nm'),
+  cost: real('cost'),
+  incomeCost: real('income_cost'),
+  incomeCostUnitNm: text('income_cost_unit_nm'),
+  lotNo: text('lot_no'),
+  purchaseDate: text('purchase_date'),
+  purchaseStatus: text('purchase_status'),
+  warehouseNm: text('warehouse_nm'),
+  totalPurchaseQty: real('total_purchase_qty'),
+  pkgUnitNm: text('pkg_unit_nm'),
+  manuDate: text('manu_date'),
+  validDate: text('valid_date'),
+  expectWearingDate: text('expect_wearing_date'),
+  realWearingDate: text('real_wearing_date'),
+  prchNo: text('prch_no'),
+  syncedAt: text('synced_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_kp_purchases_date').on(table.purchaseDate),
+  index('idx_kp_purchases_company').on(table.companyNm),
+  index('idx_kp_purchases_product').on(table.productNm),
+  index('idx_kp_purchases_lot').on(table.lotNo),
+]);
+
+// ─── 납품등록 (Delivery Orders) ───
+export const kprosDeliveries = sqliteTable('kpros_deliveries', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kprosIdx: integer('kpros_idx').unique(),
+  companyFromNm: text('company_from_nm'),
+  companyToNm: text('company_to_nm'),
+  productNm: text('product_nm'),
+  dueDate: text('due_date'),
+  deliveryStatus: text('delivery_status'),
+  deliveryStatusStr: text('delivery_status_str'),
+  deliveryBigo: text('delivery_bigo'),
+  warehouseNm: text('warehouse_nm'),
+  expectQty: real('expect_qty'),
+  realQty: real('real_qty'),
+  lotNo: text('lot_no'),
+  dvrNo: text('dvr_no'),
+  orderDate: text('order_date'),
+  orderMethod: text('order_method'),
+  pkgUnitNm: text('pkg_unit_nm'),
+  syncedAt: text('synced_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_kp_deliveries_due').on(table.dueDate),
+  index('idx_kp_deliveries_company').on(table.companyToNm),
+  index('idx_kp_deliveries_product').on(table.productNm),
+]);
+
+// ─── 입고반영 (Inbound Confirmation) ───
+export const kprosInbound = sqliteTable('kpros_inbound', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kprosIdx: integer('kpros_idx').unique(),
+  purchaseIdx: integer('purchase_idx'),
+  productNm: text('product_nm'),
+  braNm: text('bra_nm'),
+  companyNm: text('company_nm'),
+  warehouseNm: text('warehouse_nm'),
+  totalPurchaseQty: real('total_purchase_qty'),
+  lotNo: text('lot_no'),
+  purchaseDate: text('purchase_date'),
+  purchaseStatus: text('purchase_status'),
+  expectWearingDate: text('expect_wearing_date'),
+  realWearingDate: text('real_wearing_date'),
+  syncedAt: text('synced_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_kp_inbound_date').on(table.realWearingDate),
+  index('idx_kp_inbound_purchase').on(table.purchaseIdx),
+]);
+
+// ─── 출고반영 (Outbound Confirmation) ───
+export const kprosOutbound = sqliteTable('kpros_outbound', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kprosIdx: integer('kpros_idx').unique(),
+  deliveryIdx: integer('delivery_idx'),
+  companyToNm: text('company_to_nm'),
+  productNm: text('product_nm'),
+  warehouseNm: text('warehouse_nm'),
+  expectQty: real('expect_qty'),
+  realQty: real('real_qty'),
+  lotNo: text('lot_no'),
+  dueDate: text('due_date'),
+  deliveryStatus: text('delivery_status'),
+  syncedAt: text('synced_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_kp_outbound_date').on(table.dueDate),
+  index('idx_kp_outbound_delivery').on(table.deliveryIdx),
+]);
+
+// ─── 창고입고 (Warehouse Receipt) ───
+export const kprosWarehouseIn = sqliteTable('kpros_warehouse_in', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kprosIdx: integer('kpros_idx').unique(),
+  productNm: text('product_nm'),
+  braNm: text('bra_nm'),
+  warehouseNm: text('warehouse_nm'),
+  companyNm: text('company_nm'),
+  totalPurchaseQty: real('total_purchase_qty'),
+  lotNo: text('lot_no'),
+  purchaseDate: text('purchase_date'),
+  realWearingDate: text('real_wearing_date'),
+  purchaseStatus: text('purchase_status'),
+  syncedAt: text('synced_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_kp_wh_in_date').on(table.realWearingDate),
+]);
+
+// ─── 창고출고 (Warehouse Release) ───
+export const kprosWarehouseOut = sqliteTable('kpros_warehouse_out', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kprosIdx: integer('kpros_idx').unique(),
+  companyToNm: text('company_to_nm'),
+  productNm: text('product_nm'),
+  warehouseNm: text('warehouse_nm'),
+  expectQty: real('expect_qty'),
+  realQty: real('real_qty'),
+  lotNo: text('lot_no'),
+  dueDate: text('due_date'),
+  deliveryStatus: text('delivery_status'),
+  dvrNo: text('dvr_no'),
+  syncedAt: text('synced_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_kp_wh_out_date').on(table.dueDate),
+]);
+
+// ─── 성적서 CoA (Certificates of Analysis) ───
+export const kprosCoa = sqliteTable('kpros_coa', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  productIdx: integer('product_idx'),
+  productNm: text('product_nm').notNull(),
+  warehouseNm: text('warehouse_nm'),
+  lotNo: text('lot_no'),
+  companyNm: text('company_nm'),
+  manuDate: text('manu_date'),
+  validDate: text('valid_date'),
+  braNm: text('bra_nm'),
+  reportsExist: integer('reports_exist').default(0),
+  pkgAmount: real('pkg_amount'),
+  pkgUnitNm: text('pkg_unit_nm'),
+  totalAmount: real('total_amount'),
+  syncedAt: text('synced_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_kp_coa_product').on(table.productNm),
+  index('idx_kp_coa_lot').on(table.lotNo),
+  index('idx_kp_coa_valid').on(table.validDate),
+]);

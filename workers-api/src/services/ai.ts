@@ -192,6 +192,49 @@ async function callGeminiWithSearch(
   return parts.map((p: any) => p.text || "").join("");
 }
 
+// ─── Provider: Gemini 2.5 Pro (with Google Search Grounding) ───
+
+/**
+ * Gemini 2.5 Pro + Google Search로 최고등급 실시간 분석
+ */
+async function callGeminiProWithSearch(
+  apiKey: string,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 8192
+): Promise<string> {
+  const body: Record<string, unknown> = {
+    contents: [{ parts: [{ text: prompt }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      temperature: 0.2,
+    },
+  };
+
+  if (systemPrompt) {
+    body.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_PRO_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini Pro Search API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as any;
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map((p: any) => p.text || "").join("");
+}
+
 // ─── Provider: Workers AI (Fallback) ───
 
 async function callWorkersAI(
@@ -504,6 +547,45 @@ export async function askAIResearch(
   }
   // Gemini 키 없으면 기존 프리미엄 모델 사용
   return callPremium(env, prompt, systemPrompt, maxTokens);
+}
+
+/**
+ * 심층 시장 조사 → Gemini 2.5 Pro + Google Search (최고등급)
+ * 폴백: Pro+Search → Pro → Flash+Search → Flash → Workers AI
+ */
+export async function askAIResearchPro(
+  env: Env,
+  prompt: string,
+  systemPrompt?: string,
+  maxTokens = 8192
+): Promise<string> {
+  if (env.GEMINI_API_KEY) {
+    // 1차: Gemini 2.5 Pro + Google Search
+    try {
+      return await callGeminiProWithSearch(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens);
+    } catch (e) {
+      console.error("[AI] Gemini Pro+Search failed, trying Pro only:", e);
+    }
+    // 2차: Gemini 2.5 Pro (검색 없이)
+    try {
+      return await callGeminiPro(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens);
+    } catch (e) {
+      console.error("[AI] Gemini Pro failed, trying Flash+Search:", e);
+    }
+    // 3차: Gemini Flash + Search
+    try {
+      return await callGeminiWithSearch(env.GEMINI_API_KEY, prompt, systemPrompt, maxTokens);
+    } catch (e) {
+      console.error("[AI] Flash+Search failed, trying Flash:", e);
+    }
+    // 4차: Gemini Flash
+    try {
+      return await callGemini(env.GEMINI_API_KEY, prompt, systemPrompt, Math.min(maxTokens, 4096));
+    } catch (e) {
+      console.error("[AI] Flash failed, falling back to Workers AI:", e);
+    }
+  }
+  return callWorkersAI(env.AI, prompt, systemPrompt, Math.min(maxTokens, 2048));
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
  * KPROS ERP API Client Service
- * kpros.erns.co.kr 재고/품목/거래처 데이터 연동
+ * kpros.erns.co.kr 재고/품목/거래처/물류 데이터 연동
  */
 import type { Env } from '../types';
 
@@ -11,6 +11,7 @@ const KV_COMPANIES_KEY = 'kpros:companies';
 const SESSION_TTL = 60 * 25;  // 25분
 const STOCK_CACHE_TTL = 60 * 30; // 30분
 const MASTER_CACHE_TTL = 60 * 60; // 1시간 (마스터 데이터)
+const LOGISTICS_CACHE_TTL = 60 * 30; // 30분 (물류 데이터)
 
 export interface KprosStockItem {
   productIdx: number;
@@ -313,4 +314,321 @@ export async function getKprosCompanies(env: Env, forceRefresh = false, search?:
   }
 
   return data;
+}
+
+// ═══════════════════════════════════════════
+// 제네릭 KPROS 페이지네이션 Fetcher
+// ═══════════════════════════════════════════
+
+interface KprosPaginatedResult<T> {
+  items: T[];
+  totalCount: number;
+  fetchedAt: string;
+}
+
+/**
+ * 모든 KPROS 페이지네이션 API를 하나의 함수로 처리
+ */
+async function fetchKprosPaginatedList<T>(
+  env: Env,
+  endpoint: string,
+  cacheKey: string,
+  cacheTTL: number,
+  bodyParams?: string,
+  forceRefresh = false,
+): Promise<KprosPaginatedResult<T>> {
+  // 캐시 확인
+  if (!forceRefresh && env.CACHE) {
+    const cached = await env.CACHE.get(cacheKey, 'json') as KprosPaginatedResult<T> | null;
+    if (cached) return cached;
+  }
+
+  let cookieStr = await getSession(env);
+  const LIMIT = 500;
+  const baseBody = bodyParams
+    ? `limit=${LIMIT}&offset=0&${bodyParams}`
+    : `limit=${LIMIT}&offset=0&searchSelect=&searchVal=&sortType=`;
+
+  // 첫 페이지 fetch
+  let firstPage = await fetchKprosPage<T>(cookieStr, endpoint, baseBody);
+
+  // 세션 만료 → 재로그인 시도
+  if (firstPage.items.length === 0 && firstPage.totalCount === 0) {
+    cookieStr = await refreshSession(env);
+    firstPage = await fetchKprosPage<T>(cookieStr, endpoint, baseBody);
+  }
+
+  let allItems = [...firstPage.items];
+
+  // 나머지 페이지 fetch
+  while (allItems.length < firstPage.totalCount) {
+    const body = bodyParams
+      ? `limit=${LIMIT}&offset=${allItems.length}&${bodyParams}`
+      : `limit=${LIMIT}&offset=${allItems.length}&searchSelect=&searchVal=&sortType=`;
+    const page = await fetchKprosPage<T>(cookieStr, endpoint, body);
+    allItems.push(...page.items);
+    if (page.items.length === 0) break;
+  }
+
+  const result: KprosPaginatedResult<T> = {
+    items: allItems,
+    totalCount: allItems.length,
+    fetchedAt: new Date().toISOString(),
+  };
+
+  // 캐시 저장
+  if (env.CACHE) {
+    await env.CACHE.put(cacheKey, JSON.stringify(result), { expirationTtl: cacheTTL });
+  }
+
+  return result;
+}
+
+/**
+ * KPROS 단일 페이지 fetch 유틸리티
+ */
+async function fetchKprosPage<T>(
+  cookieStr: string,
+  endpoint: string,
+  body: string,
+): Promise<{ items: T[]; totalCount: number }> {
+  const res = await fetch(`${KPROS_BASE}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': cookieStr,
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    body,
+  });
+
+  const text = await res.text();
+  if (!text || text.startsWith('<!') || text.startsWith('<html')) {
+    return { items: [], totalCount: 0 };
+  }
+
+  const data = JSON.parse(text);
+  if (data.result !== 'SUCCESS') {
+    return { items: [], totalCount: 0 };
+  }
+
+  return {
+    items: (data.returnData || []) as T[],
+    totalCount: data.totalCount || 0,
+  };
+}
+
+// ═══════════════════════════════════════════
+// 물류 모듈 인터페이스 정의
+// ═══════════════════════════════════════════
+
+export interface KprosPurchaseItem {
+  idx: number;
+  productNm: string;
+  braNm: string | null;
+  companyNm: string | null;
+  cost: number | null;
+  incomeCost: number | null;
+  incomeCostUnitNm: string | null;
+  lotNo: string | null;
+  purchaseDate: string | null;
+  purchaseStatus: string | null;
+  warehouseNm: string | null;
+  totalPurchaseQty: number | null;
+  pkgUnitNm: string | null;
+  manuDate: string | null;
+  validDate: string | null;
+  expectWearingDate: string | null;
+  realWearingDate: string | null;
+  prchNo: string | null;
+}
+
+export interface KprosDeliveryItem {
+  idx: number;
+  companyFromNm: string | null;
+  companyToNm: string | null;
+  productNm: string;
+  dueDate: string | null;
+  deliveryStatus: string | null;
+  deliveryStatusStr: string | null;
+  deliveryBigo: string | null;
+  warehouseNm: string | null;
+  expectQty: number | null;
+  realQty: number | null;
+  lotNo: string | null;
+  dvrNo: string | null;
+  orderDate: string | null;
+  orderMethod: string | null;
+  pkgUnitNm: string | null;
+}
+
+export interface KprosInboundItem {
+  idx: number;
+  purchaseIdx: number | null;
+  productNm: string;
+  braNm: string | null;
+  companyNm: string | null;
+  warehouseNm: string | null;
+  totalPurchaseQty: number | null;
+  lotNo: string | null;
+  purchaseDate: string | null;
+  purchaseStatus: string | null;
+  expectWearingDate: string | null;
+  realWearingDate: string | null;
+}
+
+export interface KprosOutboundItem {
+  idx: number;
+  deliveryIdx: number | null;
+  companyToNm: string | null;
+  productNm: string;
+  warehouseNm: string | null;
+  expectQty: number | null;
+  realQty: number | null;
+  lotNo: string | null;
+  dueDate: string | null;
+  deliveryStatus: string | null;
+}
+
+export interface KprosWarehouseInItem {
+  idx: number;
+  productNm: string;
+  braNm: string | null;
+  warehouseNm: string | null;
+  companyNm: string | null;
+  totalPurchaseQty: number | null;
+  lotNo: string | null;
+  purchaseDate: string | null;
+  realWearingDate: string | null;
+  purchaseStatus: string | null;
+}
+
+export interface KprosWarehouseOutItem {
+  idx: number;
+  companyToNm: string | null;
+  productNm: string;
+  warehouseNm: string | null;
+  expectQty: number | null;
+  realQty: number | null;
+  lotNo: string | null;
+  dueDate: string | null;
+  deliveryStatus: string | null;
+  dvrNo: string | null;
+}
+
+export interface KprosCoaItem {
+  productIdx: number | null;
+  productNm: string;
+  warehouseNm: string | null;
+  lotNo: string | null;
+  companyNm: string | null;
+  manuDate: string | null;
+  validDate: string | null;
+  braNm: string | null;
+  reportsExist: number | null;
+  pkgAmount: number | null;
+  pkgUnitNm: string | null;
+  totalAmount: number | null;
+}
+
+// ═══════════════════════════════════════════
+// 물류 모듈별 데이터 조회 함수
+// ═══════════════════════════════════════════
+
+/** 매입등록 목록 조회 */
+export async function getKprosPurchases(
+  env: Env, forceRefresh = false,
+): Promise<KprosPaginatedResult<KprosPurchaseItem>> {
+  return fetchKprosPaginatedList<KprosPurchaseItem>(
+    env,
+    '/purchase/purchasePagingList.do',
+    'kpros:purchases',
+    LOGISTICS_CACHE_TTL,
+    'searchSelect=&searchVal=&sortType=&sesUserAuth=ADMIN',
+    forceRefresh,
+  );
+}
+
+/** 납품등록 목록 조회 */
+export async function getKprosDeliveries(
+  env: Env, forceRefresh = false,
+): Promise<KprosPaginatedResult<KprosDeliveryItem>> {
+  return fetchKprosPaginatedList<KprosDeliveryItem>(
+    env,
+    '/delivery/deliveryPagingList.do',
+    'kpros:deliveries',
+    LOGISTICS_CACHE_TTL,
+    'searchSelect=&searchVal=&sortType=&sesUserAuth=ADMIN',
+    forceRefresh,
+  );
+}
+
+/** 입고반영 목록 조회 */
+export async function getKprosInbound(
+  env: Env, forceRefresh = false,
+): Promise<KprosPaginatedResult<KprosInboundItem>> {
+  return fetchKprosPaginatedList<KprosInboundItem>(
+    env,
+    '/purchase/wearingApplyPagingList.do',
+    'kpros:inbound',
+    LOGISTICS_CACHE_TTL,
+    'searchSelect=&searchVal=&sortType=&sesUserAuth=ADMIN',
+    forceRefresh,
+  );
+}
+
+/** 출고반영 목록 조회 */
+export async function getKprosOutbound(
+  env: Env, forceRefresh = false,
+): Promise<KprosPaginatedResult<KprosOutboundItem>> {
+  return fetchKprosPaginatedList<KprosOutboundItem>(
+    env,
+    '/delivery/releaseApplyPagingList.do',
+    'kpros:outbound',
+    LOGISTICS_CACHE_TTL,
+    'searchSelect=&searchVal=&sortType=&sesUserAuth=ADMIN',
+    forceRefresh,
+  );
+}
+
+/** 창고입고 목록 조회 */
+export async function getKprosWarehouseIn(
+  env: Env, forceRefresh = false,
+): Promise<KprosPaginatedResult<KprosWarehouseInItem>> {
+  return fetchKprosPaginatedList<KprosWarehouseInItem>(
+    env,
+    '/warehouse/wearingPagingList.do',
+    'kpros:warehouse_in',
+    LOGISTICS_CACHE_TTL,
+    'searchSelect=&searchVal=&sortType=&sesUserAuth=ADMIN&warehouseIdx=0',
+    forceRefresh,
+  );
+}
+
+/** 창고출고 목록 조회 */
+export async function getKprosWarehouseOut(
+  env: Env, forceRefresh = false,
+): Promise<KprosPaginatedResult<KprosWarehouseOutItem>> {
+  return fetchKprosPaginatedList<KprosWarehouseOutItem>(
+    env,
+    '/delivery/releasePagingList.do',
+    'kpros:warehouse_out',
+    LOGISTICS_CACHE_TTL,
+    'searchSelect=&searchVal=&sortType=&sesUserAuth=ADMIN',
+    forceRefresh,
+  );
+}
+
+/** 성적서(CoA) 목록 조회 */
+export async function getKprosCoa(
+  env: Env, forceRefresh = false,
+): Promise<KprosPaginatedResult<KprosCoaItem>> {
+  return fetchKprosPaginatedList<KprosCoaItem>(
+    env,
+    '/product/reportListLoad.do',
+    'kpros:coa',
+    MASTER_CACHE_TTL,
+    'paging=Y&searchSelect=&searchVal=&sortType=',
+    forceRefresh,
+  );
 }
