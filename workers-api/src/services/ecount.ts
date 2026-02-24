@@ -8,6 +8,8 @@
  * - ZoneAPI:            POST https://oapi.ecount.com/OAPI/V2/Zone
  * - 로그인API:          POST https://oapi{ZONE}.ecount.com/OAPI/V2/OAPILogin
  * - 거래처등록:         /OAPI/V2/AccountBasic/SaveBasicCust
+ * - 거래처조회:         /OAPI/V2/AccountBasic/GetBasicCustList
+ * - 거래처단건조회:     /OAPI/V2/AccountBasic/ViewBasicCust
  * - 품목등록:           /OAPI/V2/InventoryBasic/SaveBasicProduct
  * - 품목조회(단건):     /OAPI/V2/InventoryBasic/ViewBasicProduct
  * - 품목조회:           /OAPI/V2/InventoryBasic/GetBasicProductsList
@@ -523,6 +525,76 @@ export async function savePurchase(
   purchase: Record<string, any>
 ): Promise<any> {
   return apiCall(env, "/OAPI/V2/Purchases/SavePurchases", purchase);
+}
+
+// ─── 거래처 조회 (목록) ───
+// 공식 엔드포인트: /OAPI/V2/AccountBasic/GetBasicCustList
+
+export interface CustomerItem {
+  CUST_CD: string;
+  CUST_DES: string;
+  BOSS_NAME?: string;
+  BUSINESS_NO?: string;
+  TEL_NO?: string;
+  FAX_NO?: string;
+  EMAIL?: string;
+  ADDR?: string;
+  UPTAE?: string;
+  JONGMOK?: string;
+  REMARK?: string;
+  USE_YN?: string;
+}
+
+export async function getCustomers(
+  env: Env,
+  pageNum = 1,
+  perPage = 1000
+): Promise<{ items: CustomerItem[]; totalCount: number; error?: string }> {
+  try {
+    const data = await apiCall(env, "/OAPI/V2/AccountBasic/GetBasicCustList", {
+      PAGE_NUM: String(pageNum),
+      PER_PAGE_NUM: String(perPage),
+    });
+
+    const items: CustomerItem[] = data.Data?.Result || data.Data?.Datas || [];
+    const totalCount = data.Data?.TotalCnt || items.length;
+    return { items: Array.isArray(items) ? items : [], totalCount };
+  } catch (e: any) {
+    const msg = e.message || "";
+    if (msg.includes("Not Found") || msg.includes("인증되지 않은")) {
+      console.warn("[ERP] GetBasicCustList API 미인증:", msg);
+      return { items: [], totalCount: 0, error: "거래처조회 API(GetBasicCustList)가 아직 인증되지 않았습니다. 이카운트 OAPI 관리 페이지에서 API 인증을 완료해주세요." };
+    }
+    throw e;
+  }
+}
+
+// ─── 거래처 전체 조회 (페이지네이션 자동) ───
+
+export async function getAllCustomers(
+  env: Env
+): Promise<{ items: CustomerItem[]; totalCount: number; error?: string }> {
+  const allItems: CustomerItem[] = [];
+  let page = 1;
+  const perPage = 1000;
+
+  while (true) {
+    const result = await getCustomers(env, page, perPage);
+    if (result.error) return result;
+
+    allItems.push(...result.items);
+
+    // 전체 데이터를 다 가져왔으면 종료
+    if (allItems.length >= result.totalCount || result.items.length < perPage) {
+      return { items: allItems, totalCount: result.totalCount };
+    }
+    page++;
+
+    // 안전장치: 최대 50페이지
+    if (page > 50) break;
+  }
+
+  return { items: allItems, totalCount: allItems.length };
 }
 
 // ─── 거래처 등록 ───

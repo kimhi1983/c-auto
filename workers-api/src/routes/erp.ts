@@ -17,8 +17,14 @@ import {
   aggregatePurchases,
   saveSale,
   savePurchase,
+  saveCustomer,
+  getAllCustomers,
   type ProductItem,
+  type CustomerItem,
 } from "../services/ecount";
+import { drizzle } from "drizzle-orm/d1";
+import { eq } from "drizzle-orm";
+import { companies } from "../db/schema";
 import { askAIAnalyze } from "../services/ai";
 import type { Env } from "../types";
 
@@ -528,6 +534,146 @@ erp.post("/purchases", async (c) => {
   } catch (e: any) {
     console.error("[ERP] SavePurchases error:", e);
     return c.json({ status: "error", message: e.message || "구매 입력 실패" }, 500);
+  }
+});
+
+// ─── POST /customers - 거래처 등록 (이카운트 SaveBasicCust) ───
+
+erp.post("/customers", async (c) => {
+  const status = getERPStatus(c.env);
+  if (!status.configured) {
+    return c.json({ status: "error", message: "ERP 인증 정보가 설정되지 않았습니다" }, 400);
+  }
+
+  const body = await c.req.json<{ items: Array<{ BUSINESS_NO: string; CUST_NAME: string; BOSS_NAME?: string; UPTAE?: string; JONGMOK?: string; TEL_NO?: string; FAX_NO?: string; EMAIL?: string; ADDR?: string; REMARK?: string }> }>();
+
+  if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+    return c.json({ status: "error", message: "등록할 거래처 정보가 없습니다" }, 400);
+  }
+
+  for (const item of body.items) {
+    if (!item.BUSINESS_NO || !item.CUST_NAME) {
+      return c.json({ status: "error", message: "필수 항목(사업자등록번호, 회사명)을 모두 입력해주세요" }, 400);
+    }
+  }
+
+  try {
+    const result = await saveCustomer(c.env, { CustList: body.items });
+    return c.json({
+      status: "success",
+      data: result,
+      message: `${body.items.length}건 거래처 등록 완료`,
+    });
+  } catch (e: any) {
+    console.error("[ERP] SaveBasicCust error:", e);
+    return c.json({ status: "error", message: e.message || "거래처 등록 실패" }, 500);
+  }
+});
+
+// ─── GET /customers/list - 이카운트 거래처 목록 조회 ───
+
+erp.get("/customers/list", async (c) => {
+  const status = getERPStatus(c.env);
+  if (!status.configured) {
+    return c.json({ status: "error", message: "ERP 인증 정보가 설정되지 않았습니다" }, 400);
+  }
+
+  try {
+    const result = await getAllCustomers(c.env);
+    return c.json({
+      status: "success",
+      data: { items: result.items, total_count: result.totalCount },
+      api_error: result.error || null,
+    });
+  } catch (e: any) {
+    console.error("[ERP] Customers list error:", e);
+    return c.json({ status: "error", message: e.message || "거래처 조회 실패" }, 500);
+  }
+});
+
+// ─── POST /customers/sync - 이카운트 거래처 → D1 동기화 ───
+
+erp.post("/customers/sync", async (c) => {
+  const status = getERPStatus(c.env);
+  if (!status.configured) {
+    return c.json({ status: "error", message: "ERP 인증 정보가 설정되지 않았습니다" }, 400);
+  }
+
+  try {
+    // 이카운트에서 전체 거래처 조회
+    const result = await getAllCustomers(c.env);
+    if (result.error) {
+      return c.json({ status: "error", message: result.error }, 400);
+    }
+
+    if (result.items.length === 0) {
+      return c.json({
+        status: "success",
+        data: { total: 0, created: 0, updated: 0 },
+        message: "이카운트에서 가져온 거래처 데이터가 없습니다",
+      });
+    }
+
+    const db = drizzle(c.env.DB);
+    let created = 0, updated = 0, skipped = 0;
+
+    for (const cust of result.items) {
+      if (!cust.CUST_DES?.trim()) { skipped++; continue; }
+
+      // 거래처코드로 기존 데이터 확인
+      const [existing] = await db
+        .select()
+        .from(companies)
+        .where(eq(companies.companyCd, cust.CUST_CD))
+        .limit(1);
+
+      // 업태/종목을 memo에 합침
+      const memoParts = [cust.UPTAE, cust.JONGMOK, cust.REMARK].filter(Boolean);
+      const memo = memoParts.join(" / ") || null;
+
+      if (existing) {
+        // 업데이트
+        await db.update(companies).set({
+          companyNm: cust.CUST_DES || existing.companyNm,
+          ceoNm: cust.BOSS_NAME || existing.ceoNm,
+          bizNo: cust.BUSINESS_NO || existing.bizNo,
+          tel: cust.TEL_NO || existing.tel,
+          fax: cust.FAX_NO || existing.fax,
+          email: cust.EMAIL || existing.email,
+          addr: cust.ADDR || existing.addr,
+          memo: memo || existing.memo,
+          companyType: cust.UPTAE || existing.companyType,
+          isActive: cust.USE_YN !== "N",
+          updatedAt: new Date().toISOString(),
+        }).where(eq(companies.id, existing.id));
+        updated++;
+      } else {
+        // 신규 등록
+        await db.insert(companies).values({
+          companyCd: cust.CUST_CD,
+          companyNm: cust.CUST_DES.trim(),
+          ceoNm: cust.BOSS_NAME || null,
+          bizNo: cust.BUSINESS_NO || null,
+          tel: cust.TEL_NO || null,
+          fax: cust.FAX_NO || null,
+          email: cust.EMAIL || null,
+          addr: cust.ADDR || null,
+          memo: memo,
+          companyType: cust.UPTAE || null,
+          isActive: cust.USE_YN !== "N",
+        });
+        created++;
+      }
+    }
+
+    return c.json({
+      status: "success",
+      data: { total: result.items.length, created, updated, skipped },
+      message: `이카운트 거래처 동기화 완료: 신규 ${created}, 업데이트 ${updated}, 건너뜀 ${skipped}`,
+    });
+  } catch (e: any) {
+    console.error("[ERP] Customer sync error:", e);
+    return c.json({ status: "error", message: e.message || "거래처 동기화 실패" }, 500);
   }
 });
 

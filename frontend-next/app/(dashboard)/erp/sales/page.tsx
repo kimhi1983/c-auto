@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 // ─── Types ───
@@ -12,6 +12,16 @@ interface ProductItem {
   PRICE?: string;
   COST?: string;
 }
+
+interface CompanyResult {
+  companyCd: string;
+  companyNm: string;
+  ceoNm?: string;
+  bizType?: string;
+}
+
+// 출고방식 옵션
+const SHIP_METHODS = ['', '택배', '직배송', '화물', '퀵서비스', '직접수령'] as const;
 
 interface SaleRow {
   id: string;
@@ -102,6 +112,17 @@ export default function SalesInputPage() {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [prodSearch, setProdSearch] = useState<Record<string, string>>({});
 
+  // 거래처 자동완성 상태
+  const [custSearch, setCustSearch] = useState('');
+  const [custResults, setCustResults] = useState<CompanyResult[]>([]);
+  const [custLoading, setCustLoading] = useState(false);
+  const [showCustDropdown, setShowCustDropdown] = useState(false);
+  const custDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 출하창고 드롭다운 상태
+  const [warehouseList, setWarehouseList] = useState<Array<{ code: string; name: string }>>([]);
+  const [showWhDropdown, setShowWhDropdown] = useState(false);
+
   // ─── 데이터 로딩 ───
 
   const fetchProducts = useCallback(async () => {
@@ -137,7 +158,49 @@ export default function SalesInputPage() {
   useEffect(() => {
     fetchProducts();
     fetchRecentSales();
+    fetchWarehouses();
   }, [fetchProducts, fetchRecentSales]);
+
+  // 거래처 debounced 검색
+  useEffect(() => {
+    if (custDebounceRef.current) clearTimeout(custDebounceRef.current);
+    if (custSearch.length < 2) {
+      setCustResults([]);
+      return;
+    }
+    setCustLoading(true);
+    custDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          apiUrl(`/api/v1/kpros/companies?search=${encodeURIComponent(custSearch)}&limit=10`),
+          { headers: authHeaders() }
+        );
+        const json = await res.json();
+        if (json.status === 'success') {
+          setCustResults(json.data?.companies || []);
+        }
+      } catch { /* ignore */ } finally {
+        setCustLoading(false);
+      }
+    }, 300);
+    return () => { if (custDebounceRef.current) clearTimeout(custDebounceRef.current); };
+  }, [custSearch]);
+
+  // 출하창고 목록 로드
+  const fetchWarehouses = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/v1/inventory/kpros-stock'), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success' && json.data?.warehouses) {
+        const HIDDEN_WH = '카이코스텍';
+        setWarehouseList(
+          json.data.warehouses
+            .filter((w: { name: string }) => w.name !== HIDDEN_WH)
+            .map((w: { name: string; code?: string }) => ({ code: w.code || w.name, name: w.name }))
+        );
+      }
+    } catch { /* ignore */ }
+  };
 
   // ─── 행 관리 ───
 
@@ -242,10 +305,20 @@ export default function SalesInputPage() {
     ).slice(0, 50);
   };
 
-  const handleCustChange = (value: string) => {
-    setCustCd(value);
-    const found = recentCustomers.find(c => c.code === value);
-    setCustDes(found ? found.name : '');
+  // 거래처 선택
+  const selectCustomer = (company: CompanyResult) => {
+    setCustCd(company.companyCd);
+    setCustDes(company.companyNm);
+    setCustSearch('');
+    setShowCustDropdown(false);
+  };
+
+  // 최근 거래처 선택
+  const selectRecentCust = (c: { code: string; name: string }) => {
+    setCustCd(c.code);
+    setCustDes(c.name);
+    setCustSearch('');
+    setShowCustDropdown(false);
   };
 
   // ─── 셀 스타일 ───
@@ -311,31 +384,80 @@ export default function SalesInputPage() {
               </select>
             </div>
 
-            {/* 거래처 */}
+            {/* 거래처 - 자동완성 */}
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-500 w-16 shrink-0">거래처</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={custCd}
-                  onChange={e => handleCustChange(e.target.value)}
-                  placeholder="거래처"
-                  list="cust-list-sale"
-                  className={`${headerInputCls} w-28`}
-                />
-                <datalist id="cust-list-sale">
-                  {recentCustomers.map(c => (
-                    <option key={c.code} value={c.code}>{c.name}</option>
-                  ))}
-                </datalist>
-              </div>
               <input
                 type="text"
-                value={custDes}
-                onChange={e => setCustDes(e.target.value)}
-                placeholder=""
-                className={`${headerInputCls} flex-1 bg-slate-50`}
+                value={custCd}
+                readOnly
+                placeholder="코드"
+                className={`${headerInputCls} w-28 bg-slate-50 cursor-default`}
               />
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={showCustDropdown ? custSearch : custDes}
+                  onChange={e => { setCustSearch(e.target.value); setShowCustDropdown(true); }}
+                  onFocus={() => setShowCustDropdown(true)}
+                  placeholder="거래처명 검색 (2자 이상)"
+                  className={`${headerInputCls} w-full`}
+                />
+                {custLoading && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+                {showCustDropdown && (
+                  <div className="absolute z-50 top-full left-0 mt-0.5 w-full bg-white border border-slate-300 rounded-lg shadow-xl max-h-52 overflow-y-auto">
+                    {custSearch.length >= 2 ? (
+                      custResults.length === 0 && !custLoading ? (
+                        <div className="px-3 py-3 text-xs text-slate-400 text-center">검색 결과 없음</div>
+                      ) : (
+                        custResults.map(c => (
+                          <button
+                            key={c.companyCd}
+                            onClick={() => selectCustomer(c)}
+                            className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
+                          >
+                            <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 shrink-0">{c.companyCd}</code>
+                            <span className="text-slate-800 truncate flex-1">{c.companyNm}</span>
+                            {c.ceoNm && <span className="text-xs text-slate-400 shrink-0">{c.ceoNm}</span>}
+                          </button>
+                        ))
+                      )
+                    ) : (
+                      /* 검색어 없을 때 최근 거래처 목록 */
+                      recentCustomers.length > 0 ? (
+                        <>
+                          <div className="px-3 py-1.5 text-xs text-slate-400 bg-slate-50 border-b border-slate-100">최근 거래처</div>
+                          {recentCustomers.map(c => (
+                            <button
+                              key={c.code}
+                              onClick={() => selectRecentCust(c)}
+                              className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
+                            >
+                              <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 shrink-0">{c.code}</code>
+                              <span className="text-slate-800 truncate flex-1">{c.name}</span>
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <div className="px-3 py-3 text-xs text-slate-400 text-center">거래처명을 2자 이상 입력하세요</div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* 선택 해제 버튼 */}
+              {custCd && (
+                <button
+                  onClick={() => { setCustCd(''); setCustDes(''); setCustSearch(''); }}
+                  className="w-6 h-6 rounded-full bg-slate-200 inline-flex items-center justify-center hover:bg-slate-300 transition shrink-0"
+                >
+                  <svg className="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
             </div>
 
             {/* 담당자 (표시만) */}
@@ -345,23 +467,52 @@ export default function SalesInputPage() {
               <input type="text" placeholder="" className={`${headerInputCls} flex-1 bg-slate-50`} readOnly />
             </div>
 
-            {/* 출하창고 */}
+            {/* 출하창고 - KPROS 창고 드롭다운 */}
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-500 w-16 shrink-0">출하창고</label>
               <input
                 type="text"
                 value={whCd}
-                onChange={e => setWhCd(e.target.value)}
-                placeholder="출하창고"
-                className={`${headerInputCls} w-28`}
+                readOnly
+                placeholder="코드"
+                className={`${headerInputCls} w-28 bg-slate-50 cursor-default`}
               />
-              <input
-                type="text"
-                value={whDes}
-                onChange={e => setWhDes(e.target.value)}
-                placeholder=""
-                className={`${headerInputCls} flex-1 bg-slate-50`}
-              />
+              <div className="relative flex-1">
+                <button
+                  type="button"
+                  onClick={() => setShowWhDropdown(!showWhDropdown)}
+                  className={`${headerInputCls} w-full text-left flex items-center justify-between cursor-pointer`}
+                >
+                  <span className={whDes ? 'text-slate-800' : 'text-slate-400'}>{whDes || '창고 선택'}</span>
+                  <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {showWhDropdown && (
+                  <div className="absolute z-50 top-full left-0 mt-0.5 w-full bg-white border border-slate-300 rounded-lg shadow-xl max-h-52 overflow-y-auto">
+                    {warehouseList.length === 0 ? (
+                      <div className="px-3 py-3 text-xs text-slate-400 text-center">창고 목록 로딩 중...</div>
+                    ) : (
+                      warehouseList.map(w => (
+                        <button
+                          key={w.code}
+                          onClick={() => { setWhCd(w.code); setWhDes(w.name); setShowWhDropdown(false); }}
+                          className={`w-full text-left px-3 py-2 hover:bg-blue-50 text-sm transition border-b border-slate-100 last:border-0 ${whCd === w.code ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700'}`}
+                        >
+                          {w.name}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* 선택 해제 */}
+              {whCd && (
+                <button
+                  onClick={() => { setWhCd(''); setWhDes(''); }}
+                  className="w-6 h-6 rounded-full bg-slate-200 inline-flex items-center justify-center hover:bg-slate-300 transition shrink-0"
+                >
+                  <svg className="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
             </div>
 
             {/* 거래유형 */}
@@ -380,16 +531,19 @@ export default function SalesInputPage() {
               </select>
             </div>
 
-            {/* 출고방식 */}
+            {/* 출고방식 - 드롭다운 */}
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-500 w-16 shrink-0">출고방식</label>
-              <input
-                type="text"
+              <select
                 value={shipMethod}
                 onChange={e => setShipMethod(e.target.value)}
-                placeholder="출고방식"
-                className={`${headerInputCls} flex-1`}
-              />
+                className={`${headerSelectCls} flex-1`}
+              >
+                <option value="">선택안함</option>
+                {SHIP_METHODS.filter(m => m !== '').map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
             </div>
           </div>
         </div>
@@ -655,8 +809,8 @@ export default function SalesInputPage() {
       )}
 
       {/* 드롭다운 닫기용 오버레이 */}
-      {openDropdown && (
-        <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
+      {(openDropdown || showCustDropdown || showWhDropdown) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setOpenDropdown(null); setShowCustDropdown(false); setShowWhDropdown(false); }} />
       )}
     </div>
   );

@@ -619,6 +619,85 @@ export async function getKprosWarehouseOut(
   );
 }
 
+/**
+ * 거래처 크롤링 디버그 — 로그인 + API 호출 raw 응답 반환
+ */
+export async function debugCrawlCompanies(env: Env): Promise<{
+  loginOk: boolean;
+  loginBody: any;
+  cookieStr: string;
+  apiStatus: number;
+  apiHeaders: Record<string, string>;
+  apiBodyRaw: string;
+  apiBodyParsed: any;
+  items: KprosCompany[];
+  totalCount: number;
+}> {
+  // 1) 로그인
+  const loginRes = await fetch(`${KPROS_BASE}/login/doLogin.do`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `userId=${env.KPROS_USER_ID}&userPassword=${env.KPROS_PASSWORD}&userStatus=1`,
+  });
+  const loginBody = await loginRes.json() as any;
+  const loginOk = loginBody.result === 'SUCCESS';
+
+  // 쿠키 추출
+  let userKey = '', userInfo = '';
+  const allCookies = loginRes.headers.getSetCookie?.() || [];
+  for (const header of allCookies) {
+    const km = header.match(/^userKey=([^;]+)/);
+    const im = header.match(/^userInfo=([^;]+)/);
+    if (km) userKey = km[1];
+    if (im) userInfo = im[1];
+  }
+  if (!userKey || !userInfo) {
+    const raw = loginRes.headers.get('Set-Cookie') || '';
+    const km = raw.match(/userKey=([^;]+)/);
+    const im = raw.match(/userInfo=([^;]+)/);
+    if (km) userKey = km[1];
+    if (im) userInfo = im[1];
+  }
+  const cookieStr = `userKey=${userKey}; userInfo=${userInfo}`;
+
+  // 2) 거래처 API 호출
+  const apiRes = await fetch(`${KPROS_BASE}/company/companyPagingList.do`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': cookieStr,
+      'X-Requested-With': 'XMLHttpRequest',
+      'Referer': `${KPROS_BASE}/company/companyList.do?menu=basicInfo`,
+    },
+    body: 'paging=Y&limit=50&offset=0&searchSelect=&searchVal=&sellYn=&buyYn=&sortType=&availableYn=',
+  });
+
+  const apiBodyRaw = await apiRes.text();
+  const apiHeaders: Record<string, string> = {};
+  apiRes.headers.forEach((v, k) => { apiHeaders[k] = v; });
+
+  let apiBodyParsed: any = null;
+  let items: KprosCompany[] = [];
+  let totalCount = 0;
+  try {
+    apiBodyParsed = JSON.parse(apiBodyRaw);
+    items = (apiBodyParsed.returnData || []) as KprosCompany[];
+    totalCount = apiBodyParsed.totalCount || 0;
+  } catch { /* JSON 파싱 실패 */ }
+
+  return {
+    loginOk,
+    loginBody: { result: loginBody.result, returnMessage: loginBody.returnMessage },
+    cookieStr: cookieStr.substring(0, 50) + '...',
+    apiStatus: apiRes.status,
+    apiHeaders,
+    apiBodyRaw: apiBodyRaw.substring(0, 2000),
+    apiBodyParsed,
+    items,
+    totalCount,
+  };
+}
+
 /** 성적서(CoA) 목록 조회 */
 export async function getKprosCoa(
   env: Env, forceRefresh = false,
