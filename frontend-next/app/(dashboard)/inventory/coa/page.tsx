@@ -6,18 +6,18 @@ import { apiUrl, authHeaders } from '@/lib/api';
 
 interface CoaItem {
   id: number;
-  product_idx: number | null;
-  product_nm: string;
-  warehouse_nm: string | null;
-  lot_no: string | null;
-  company_nm: string | null;
-  manu_date: string | null;
-  valid_date: string | null;
-  bra_nm: string | null;
-  reports_exist: number | null;
-  pkg_amount: number | null;
-  pkg_unit_nm: string | null;
-  total_amount: number | null;
+  productIdx: number | null;
+  productNm: string;
+  warehouseNm: string | null;
+  lotNo: string | null;
+  companyNm: string | null;
+  manuDate: string | null;
+  validDate: string | null;
+  braNm: string | null;
+  reportsExist: number | null;
+  pkgAmount: number | null;
+  pkgUnitNm: string | null;
+  totalAmount: number | null;
 }
 
 export default function CoaPage() {
@@ -143,19 +143,19 @@ export default function CoaPage() {
                     onClick={() => setSelected(item)}
                     className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 font-medium text-slate-800 max-w-[180px] truncate">{item.product_nm}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.bra_nm || '-'}</td>
-                    <td className="px-4 py-3 text-slate-600 max-w-[120px] truncate">{item.company_nm || '-'}</td>
-                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lot_no || '-'}</td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.manu_date || '-'}</td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.valid_date || '-'}</td>
-                    <td className="px-4 py-3 text-center">{expiryBadge(item.valid_date)}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800 max-w-[180px] truncate">{item.productNm}</td>
+                    <td className="px-4 py-3 text-slate-600">{item.braNm || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600 max-w-[120px] truncate">{item.companyNm || '-'}</td>
+                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lotNo || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.manuDate || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.validDate || '-'}</td>
+                    <td className="px-4 py-3 text-center">{expiryBadge(item.validDate)}</td>
                     <td className="px-4 py-3 text-right text-slate-800">
-                      {item.total_amount?.toLocaleString() || item.pkg_amount?.toLocaleString() || '-'}
-                      {item.pkg_unit_nm && <span className="text-xs text-slate-400 ml-1">{item.pkg_unit_nm}</span>}
+                      {item.totalAmount?.toLocaleString() || item.pkgAmount?.toLocaleString() || '-'}
+                      {item.pkgUnitNm && <span className="text-xs text-slate-400 ml-1">{item.pkgUnitNm}</span>}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      {item.reports_exist ? (
+                      {item.reportsExist ? (
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">있음</span>
                       ) : (
                         <span className="text-xs text-slate-400">없음</span>
@@ -207,26 +207,26 @@ export default function CoaPage() {
             </div>
             <div className="space-y-3">
               {[
-                ['품목명', selected.product_nm],
-                ['브랜드', selected.bra_nm],
-                ['거래처', selected.company_nm],
-                ['창고', selected.warehouse_nm],
-                ['LOT번호', selected.lot_no],
-                ['제조일', selected.manu_date],
-                ['유효일', selected.valid_date],
-                ['포장수량', `${selected.pkg_amount?.toLocaleString() || '-'} ${selected.pkg_unit_nm || ''}`],
-                ['총수량', selected.total_amount?.toLocaleString()],
-                ['성적서 유무', selected.reports_exist ? '있음' : '없음'],
+                ['품목명', selected.productNm],
+                ['브랜드', selected.braNm],
+                ['거래처', selected.companyNm],
+                ['창고', selected.warehouseNm],
+                ['LOT번호', selected.lotNo],
+                ['제조일', selected.manuDate],
+                ['유효일', selected.validDate],
+                ['포장수량', `${selected.pkgAmount?.toLocaleString() || '-'} ${selected.pkgUnitNm || ''}`],
+                ['총수량', selected.totalAmount?.toLocaleString()],
+                ['성적서 유무', selected.reportsExist ? '있음' : '없음'],
               ].map(([label, value]) => (
                 <div key={label as string} className="flex">
                   <span className="w-24 text-sm text-slate-500 shrink-0">{label}</span>
                   <span className="text-sm font-medium text-slate-800">{value || '-'}</span>
                 </div>
               ))}
-              {selected.valid_date && (
+              {selected.validDate && (
                 <div className="flex">
                   <span className="w-24 text-sm text-slate-500 shrink-0">남은기간</span>
-                  <span>{expiryBadge(selected.valid_date)}</span>
+                  <span>{expiryBadge(selected.validDate)}</span>
                 </div>
               )}
             </div>

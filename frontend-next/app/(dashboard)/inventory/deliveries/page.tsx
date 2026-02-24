@@ -5,22 +5,22 @@ import { apiUrl, authHeaders } from '@/lib/api';
 
 interface DeliveryItem {
   id: number;
-  kpros_idx: number;
-  company_from_nm: string | null;
-  company_to_nm: string | null;
-  product_nm: string;
-  due_date: string | null;
-  delivery_status: string | null;
-  delivery_status_str: string | null;
-  delivery_bigo: string | null;
-  warehouse_nm: string | null;
-  expect_qty: number | null;
-  real_qty: number | null;
-  lot_no: string | null;
-  dvr_no: string | null;
-  order_date: string | null;
-  order_method: string | null;
-  pkg_unit_nm: string | null;
+  kprosIdx: number;
+  companyFromNm: string | null;
+  companyToNm: string | null;
+  productNm: string;
+  dueDate: string | null;
+  deliveryStatus: string | null;
+  deliveryStatusStr: string | null;
+  deliveryBigo: string | null;
+  warehouseNm: string | null;
+  expectQty: number | null;
+  realQty: number | null;
+  lotNo: string | null;
+  dvrNo: string | null;
+  orderDate: string | null;
+  orderMethod: string | null;
+  pkgUnitNm: string | null;
 }
 
 export default function DeliveriesPage() {
@@ -132,17 +132,17 @@ export default function DeliveriesPage() {
                     onClick={() => setSelected(item)}
                     className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.due_date || '-'}</td>
-                    <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate">{item.product_nm}</td>
-                    <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate">{item.company_to_nm || '-'}</td>
-                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lot_no || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.dueDate || '-'}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate">{item.productNm}</td>
+                    <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate">{item.companyToNm || '-'}</td>
+                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lotNo || '-'}</td>
                     <td className="px-4 py-3 text-right text-slate-600">
-                      {item.expect_qty?.toLocaleString() || '-'} <span className="text-xs text-slate-400">{item.pkg_unit_nm}</span>
+                      {item.expectQty?.toLocaleString() || '-'} <span className="text-xs text-slate-400">{item.pkgUnitNm}</span>
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-slate-800">
-                      {item.real_qty?.toLocaleString() || '-'}
+                      {item.realQty?.toLocaleString() || '-'}
                     </td>
-                    <td className="px-4 py-3">{statusBadge(item.delivery_status, item.delivery_status_str)}</td>
+                    <td className="px-4 py-3">{statusBadge(item.deliveryStatus, item.deliveryStatusStr)}</td>
                   </tr>
                 ))
               )}
@@ -189,19 +189,19 @@ export default function DeliveriesPage() {
             </div>
             <div className="space-y-3">
               {[
-                ['품목명', selected.product_nm],
-                ['납품처(수령)', selected.company_to_nm],
-                ['발주처(발송)', selected.company_from_nm],
-                ['납기일', selected.due_date],
-                ['주문일', selected.order_date],
-                ['주문방법', selected.order_method],
-                ['LOT번호', selected.lot_no],
-                ['예정수량', `${selected.expect_qty?.toLocaleString() || '-'} ${selected.pkg_unit_nm || ''}`],
-                ['실수량', selected.real_qty?.toLocaleString()],
-                ['창고', selected.warehouse_nm],
-                ['상태', selected.delivery_status_str || selected.delivery_status],
-                ['납품번호', selected.dvr_no],
-                ['비고', selected.delivery_bigo],
+                ['품목명', selected.productNm],
+                ['납품처(수령)', selected.companyToNm],
+                ['발주처(발송)', selected.companyFromNm],
+                ['납기일', selected.dueDate],
+                ['주문일', selected.orderDate],
+                ['주문방법', selected.orderMethod],
+                ['LOT번호', selected.lotNo],
+                ['예정수량', `${selected.expectQty?.toLocaleString() || '-'} ${selected.pkgUnitNm || ''}`],
+                ['실수량', selected.realQty?.toLocaleString()],
+                ['창고', selected.warehouseNm],
+                ['상태', selected.deliveryStatusStr || selected.deliveryStatus],
+                ['납품번호', selected.dvrNo],
+                ['비고', selected.deliveryBigo],
               ].map(([label, value]) => (
                 <div key={label as string} className="flex">
                   <span className="w-28 text-sm text-slate-500 shrink-0">{label}</span>

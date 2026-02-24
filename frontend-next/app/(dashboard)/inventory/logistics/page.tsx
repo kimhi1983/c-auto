@@ -211,11 +211,11 @@ export default function LogisticsDashboard() {
               {data.recentPurchases.map((item, i) => (
                 <div key={i} className="flex items-center justify-between text-sm">
                   <div className="min-w-0">
-                    <div className="font-medium text-slate-800 truncate">{item.product_nm}</div>
-                    <div className="text-xs text-slate-500">{item.company_nm} · {item.purchase_date}</div>
+                    <div className="font-medium text-slate-800 truncate">{item.productNm}</div>
+                    <div className="text-xs text-slate-500">{item.companyNm} · {item.purchaseDate}</div>
                   </div>
                   <span className="text-xs font-medium text-slate-600 shrink-0 ml-2">
-                    {item.total_purchase_qty?.toLocaleString()} {item.pkg_unit_nm}
+                    {item.totalPurchaseQty?.toLocaleString()} {item.pkgUnitNm}
                   </span>
                 </div>
               ))}
@@ -236,13 +236,13 @@ export default function LogisticsDashboard() {
               {data.recentDeliveries.map((item, i) => (
                 <div key={i} className="flex items-center justify-between text-sm">
                   <div className="min-w-0">
-                    <div className="font-medium text-slate-800 truncate">{item.product_nm}</div>
-                    <div className="text-xs text-slate-500">{item.company_to_nm} · {item.due_date}</div>
+                    <div className="font-medium text-slate-800 truncate">{item.productNm}</div>
+                    <div className="text-xs text-slate-500">{item.companyToNm} · {item.dueDate}</div>
                   </div>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ml-2 ${
-                    item.delivery_status === 'COMPLETE' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                    item.deliveryStatus === 'COMPLETE' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
                   }`}>
-                    {item.delivery_status_str || item.delivery_status || '-'}
+                    {item.deliveryStatusStr || item.deliveryStatus || '-'}
                   </span>
                 </div>
               ))}
@@ -261,14 +261,14 @@ export default function LogisticsDashboard() {
           {data?.expiringCoa?.length ? (
             <div className="space-y-2.5">
               {data.expiringCoa.map((item, i) => {
-                const daysLeft = item.valid_date
-                  ? Math.ceil((new Date(item.valid_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                const daysLeft = item.validDate
+                  ? Math.ceil((new Date(item.validDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
                   : null;
                 return (
                   <div key={i} className="flex items-center justify-between text-sm">
                     <div className="min-w-0">
-                      <div className="font-medium text-slate-800 truncate">{item.product_nm}</div>
-                      <div className="text-xs text-slate-500">{item.lot_no} · {item.valid_date}</div>
+                      <div className="font-medium text-slate-800 truncate">{item.productNm}</div>
+                      <div className="text-xs text-slate-500">{item.lotNo} · {item.validDate}</div>
                     </div>
                     <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ml-2 ${
                       daysLeft !== null && daysLeft <= 30 ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'

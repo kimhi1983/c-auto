@@ -5,28 +5,28 @@ import { apiUrl, authHeaders } from '@/lib/api';
 
 interface WarehouseInItem {
   id: number;
-  product_nm: string;
-  bra_nm: string | null;
-  warehouse_nm: string | null;
-  company_nm: string | null;
-  total_purchase_qty: number | null;
-  lot_no: string | null;
-  purchase_date: string | null;
-  real_wearing_date: string | null;
-  purchase_status: string | null;
+  productNm: string;
+  braNm: string | null;
+  warehouseNm: string | null;
+  companyNm: string | null;
+  totalPurchaseQty: number | null;
+  lotNo: string | null;
+  purchaseDate: string | null;
+  realWearingDate: string | null;
+  purchaseStatus: string | null;
 }
 
 interface WarehouseOutItem {
   id: number;
-  company_to_nm: string | null;
-  product_nm: string;
-  warehouse_nm: string | null;
-  expect_qty: number | null;
-  real_qty: number | null;
-  lot_no: string | null;
-  due_date: string | null;
-  delivery_status: string | null;
-  dvr_no: string | null;
+  companyToNm: string | null;
+  productNm: string;
+  warehouseNm: string | null;
+  expectQty: number | null;
+  realQty: number | null;
+  lotNo: string | null;
+  dueDate: string | null;
+  deliveryStatus: string | null;
+  dvrNo: string | null;
 }
 
 type Tab = 'in' | 'out';
@@ -152,18 +152,18 @@ export default function WarehousePage() {
                 ) : (
                   inItems.map((item) => (
                     <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.real_wearing_date || item.purchase_date || '-'}</td>
-                      <td className="px-4 py-3 font-medium text-slate-800 max-w-[180px] truncate">{item.product_nm}</td>
-                      <td className="px-4 py-3 text-slate-600">{item.bra_nm || '-'}</td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[120px] truncate">{item.company_nm || '-'}</td>
-                      <td className="px-4 py-3 text-slate-600">{item.warehouse_nm || '-'}</td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-800">{item.total_purchase_qty?.toLocaleString() || '-'}</td>
-                      <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lot_no || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.realWearingDate || item.purchaseDate || '-'}</td>
+                      <td className="px-4 py-3 font-medium text-slate-800 max-w-[180px] truncate">{item.productNm}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.braNm || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600 max-w-[120px] truncate">{item.companyNm || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.warehouseNm || '-'}</td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-800">{item.totalPurchaseQty?.toLocaleString() || '-'}</td>
+                      <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lotNo || '-'}</td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                          item.purchase_status?.includes('완료') ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
+                          item.purchaseStatus?.includes('완료') ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {item.purchase_status || '-'}
+                          {item.purchaseStatus || '-'}
                         </span>
                       </td>
                     </tr>
@@ -199,18 +199,18 @@ export default function WarehousePage() {
                 ) : (
                   outItems.map((item) => (
                     <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.due_date || '-'}</td>
-                      <td className="px-4 py-3 font-medium text-slate-800 max-w-[180px] truncate">{item.product_nm}</td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[120px] truncate">{item.company_to_nm || '-'}</td>
-                      <td className="px-4 py-3 text-slate-600">{item.warehouse_nm || '-'}</td>
-                      <td className="px-4 py-3 text-right text-slate-600">{item.expect_qty?.toLocaleString() || '-'}</td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-800">{item.real_qty?.toLocaleString() || '-'}</td>
-                      <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lot_no || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.dueDate || '-'}</td>
+                      <td className="px-4 py-3 font-medium text-slate-800 max-w-[180px] truncate">{item.productNm}</td>
+                      <td className="px-4 py-3 text-slate-600 max-w-[120px] truncate">{item.companyToNm || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600">{item.warehouseNm || '-'}</td>
+                      <td className="px-4 py-3 text-right text-slate-600">{item.expectQty?.toLocaleString() || '-'}</td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-800">{item.realQty?.toLocaleString() || '-'}</td>
+                      <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lotNo || '-'}</td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                          item.delivery_status?.includes('완료') || item.delivery_status === 'COMPLETE' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
+                          item.deliveryStatus?.includes('완료') || item.deliveryStatus === 'COMPLETE' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {item.delivery_status || '-'}
+                          {item.deliveryStatus || '-'}
                         </span>
                       </td>
                     </tr>

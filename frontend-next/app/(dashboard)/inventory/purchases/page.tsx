@@ -5,24 +5,24 @@ import { apiUrl, authHeaders } from '@/lib/api';
 
 interface PurchaseItem {
   id: number;
-  kpros_idx: number;
-  product_nm: string;
-  bra_nm: string | null;
-  company_nm: string | null;
+  kprosIdx: number;
+  productNm: string;
+  braNm: string | null;
+  companyNm: string | null;
   cost: number | null;
-  income_cost: number | null;
-  income_cost_unit_nm: string | null;
-  lot_no: string | null;
-  purchase_date: string | null;
-  purchase_status: string | null;
-  warehouse_nm: string | null;
-  total_purchase_qty: number | null;
-  pkg_unit_nm: string | null;
-  manu_date: string | null;
-  valid_date: string | null;
-  expect_wearing_date: string | null;
-  real_wearing_date: string | null;
-  prch_no: string | null;
+  incomeCost: number | null;
+  incomeCostUnitNm: string | null;
+  lotNo: string | null;
+  purchaseDate: string | null;
+  purchaseStatus: string | null;
+  warehouseNm: string | null;
+  totalPurchaseQty: number | null;
+  pkgUnitNm: string | null;
+  manuDate: string | null;
+  validDate: string | null;
+  expectWearingDate: string | null;
+  realWearingDate: string | null;
+  prchNo: string | null;
 }
 
 export default function PurchasesPage() {
@@ -126,17 +126,17 @@ export default function PurchasesPage() {
                     onClick={() => setSelected(item)}
                     className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.purchase_date || '-'}</td>
-                    <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate">{item.product_nm}</td>
-                    <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate">{item.company_nm || '-'}</td>
-                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lot_no || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.purchaseDate || '-'}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate">{item.productNm}</td>
+                    <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate">{item.companyNm || '-'}</td>
+                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{item.lotNo || '-'}</td>
                     <td className="px-4 py-3 text-right font-medium text-slate-800">
-                      {item.total_purchase_qty?.toLocaleString() || '-'} <span className="text-xs text-slate-400">{item.pkg_unit_nm}</span>
+                      {item.totalPurchaseQty?.toLocaleString() || '-'} <span className="text-xs text-slate-400">{item.pkgUnitNm}</span>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{item.warehouse_nm || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600">{item.warehouseNm || '-'}</td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColor(item.purchase_status)}`}>
-                        {item.purchase_status || '-'}
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColor(item.purchaseStatus)}`}>
+                        {item.purchaseStatus || '-'}
                       </span>
                     </td>
                   </tr>
@@ -185,21 +185,21 @@ export default function PurchasesPage() {
             </div>
             <div className="space-y-3">
               {[
-                ['품목명', selected.product_nm],
-                ['브랜드', selected.bra_nm],
-                ['거래처', selected.company_nm],
-                ['매입일', selected.purchase_date],
-                ['LOT번호', selected.lot_no],
-                ['수량', `${selected.total_purchase_qty?.toLocaleString() || '-'} ${selected.pkg_unit_nm || ''}`],
+                ['품목명', selected.productNm],
+                ['브랜드', selected.braNm],
+                ['거래처', selected.companyNm],
+                ['매입일', selected.purchaseDate],
+                ['LOT번호', selected.lotNo],
+                ['수량', `${selected.totalPurchaseQty?.toLocaleString() || '-'} ${selected.pkgUnitNm || ''}`],
                 ['단가', selected.cost?.toLocaleString()],
-                ['입고단가', `${selected.income_cost?.toLocaleString() || '-'} ${selected.income_cost_unit_nm || ''}`],
-                ['창고', selected.warehouse_nm],
-                ['상태', selected.purchase_status],
-                ['매입번호', selected.prch_no],
-                ['제조일', selected.manu_date],
-                ['유효일', selected.valid_date],
-                ['입고예정일', selected.expect_wearing_date],
-                ['실입고일', selected.real_wearing_date],
+                ['입고단가', `${selected.incomeCost?.toLocaleString() || '-'} ${selected.incomeCostUnitNm || ''}`],
+                ['창고', selected.warehouseNm],
+                ['상태', selected.purchaseStatus],
+                ['매입번호', selected.prchNo],
+                ['제조일', selected.manuDate],
+                ['유효일', selected.validDate],
+                ['입고예정일', selected.expectWearingDate],
+                ['실입고일', selected.realWearingDate],
               ].map(([label, value]) => (
                 <div key={label as string} className="flex">
                   <span className="w-24 text-sm text-slate-500 shrink-0">{label}</span>
