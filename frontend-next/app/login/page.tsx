@@ -71,7 +71,7 @@ export default function LoginPage() {
             <span className="text-white font-bold text-2xl">C</span>
           </div>
           <h1 className="text-3xl font-bold text-slate-900">C-Auto</h1>
-          <p className="text-sm text-slate-500 mt-1.5">스마트 이메일 분석 시스템</p>
+          <p className="text-sm text-slate-500 mt-1.5">업무 자동화 플랫폼</p>
         </div>
 
         {/* Login form */}
@@ -145,7 +145,7 @@ export default function LoginPage() {
         {/* Footer */}
         <div className="text-center mt-6 animate-fadeIn">
           <p className="text-xs text-slate-400">
-            C-Auto v2.0 &middot; AI 기반 업무 자동화 플랫폼
+            C-Auto v2.0 &middot; 업무 자동화 플랫폼
           </p>
         </div>
       </div>
