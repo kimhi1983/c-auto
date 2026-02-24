@@ -74,13 +74,13 @@ export default function LogisticsDashboard() {
   const s = data?.summary;
 
   const flowCards = [
-    { label: '매입등록', count: s?.purchases || 0, href: '/logistics/purchases', color: 'bg-blue-50 text-blue-700 border-blue-200' },
+    { label: '매입등록', count: s?.purchases || 0, href: '/inventory/purchases', color: 'bg-blue-50 text-blue-700 border-blue-200' },
     { label: '입고반영', count: s?.inbound || 0, href: '#', color: 'bg-sky-50 text-sky-700 border-sky-200' },
-    { label: '창고입고', count: s?.warehouseIn || 0, href: '/logistics/warehouse', color: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-    { label: '납품등록', count: s?.deliveries || 0, href: '/logistics/deliveries', color: 'bg-orange-50 text-orange-700 border-orange-200' },
+    { label: '창고입고', count: s?.warehouseIn || 0, href: '/inventory/warehouse', color: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+    { label: '납품등록', count: s?.deliveries || 0, href: '/inventory/deliveries', color: 'bg-orange-50 text-orange-700 border-orange-200' },
     { label: '출고반영', count: s?.outbound || 0, href: '#', color: 'bg-amber-50 text-amber-700 border-amber-200' },
-    { label: '창고출고', count: s?.warehouseOut || 0, href: '/logistics/warehouse', color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-    { label: '성적서(CoA)', count: s?.coa || 0, href: '/logistics/coa', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    { label: '창고출고', count: s?.warehouseOut || 0, href: '/inventory/warehouse', color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+    { label: '성적서(CoA)', count: s?.coa || 0, href: '/inventory/coa', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   ];
 
   return (
@@ -204,7 +204,7 @@ export default function LogisticsDashboard() {
         <div className="bg-white rounded-2xl border border-slate-200/80 p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-bold text-slate-700">최근 매입</h3>
-            <Link href="/logistics/purchases" className="text-xs text-brand-600 hover:text-brand-700 font-medium">전체보기</Link>
+            <Link href="/inventory/purchases" className="text-xs text-brand-600 hover:text-brand-700 font-medium">전체보기</Link>
           </div>
           {data?.recentPurchases?.length ? (
             <div className="space-y-2.5">
@@ -229,7 +229,7 @@ export default function LogisticsDashboard() {
         <div className="bg-white rounded-2xl border border-slate-200/80 p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-bold text-slate-700">최근 납품</h3>
-            <Link href="/logistics/deliveries" className="text-xs text-brand-600 hover:text-brand-700 font-medium">전체보기</Link>
+            <Link href="/inventory/deliveries" className="text-xs text-brand-600 hover:text-brand-700 font-medium">전체보기</Link>
           </div>
           {data?.recentDeliveries?.length ? (
             <div className="space-y-2.5">
@@ -256,7 +256,7 @@ export default function LogisticsDashboard() {
         <div className="bg-white rounded-2xl border border-slate-200/80 p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-bold text-slate-700">만료 임박 성적서</h3>
-            <Link href="/logistics/coa?expiring=true" className="text-xs text-brand-600 hover:text-brand-700 font-medium">전체보기</Link>
+            <Link href="/inventory/coa?expiring=true" className="text-xs text-brand-600 hover:text-brand-700 font-medium">전체보기</Link>
           </div>
           {data?.expiringCoa?.length ? (
             <div className="space-y-2.5">
