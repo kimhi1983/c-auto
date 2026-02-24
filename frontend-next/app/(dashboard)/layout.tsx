@@ -52,6 +52,16 @@ const NAV_ITEMS: NavItem[] = [
       { href: '/inventory/coa', label: '성적서(CoA)' },
     ],
   },
+  {
+    href: '/erp',
+    label: 'ERP 연동',
+    icon: 'truck',
+    children: [
+      { href: '/erp', label: 'ERP 현황' },
+      { href: '/erp/sales', label: '판매입력' },
+      { href: '/erp/purchases', label: '구매입력' },
+    ],
+  },
   { href: '/kpros', label: '거래처 관리', icon: 'database' },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
 ];

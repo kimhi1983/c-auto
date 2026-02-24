@@ -15,6 +15,8 @@ import {
   getERPStatus,
   aggregateSales,
   aggregatePurchases,
+  saveSale,
+  savePurchase,
   type ProductItem,
 } from "../services/ecount";
 import { askAIAnalyze } from "../services/ai";
@@ -460,6 +462,72 @@ ${dataForAI}
   } catch (e: any) {
     console.error("[ERP] Report generation error:", e);
     return c.json({ status: "error", message: e.message || "보고서 생성 실패" }, 500);
+  }
+});
+
+// ─── POST /sales - 판매 입력 (이카운트 SaveSale) ───
+
+erp.post("/sales", async (c) => {
+  const status = getERPStatus(c.env);
+  if (!status.configured) {
+    return c.json({ status: "error", message: "ERP 인증 정보가 설정되지 않았습니다" }, 400);
+  }
+
+  const body = await c.req.json<{ items: Array<{ IO_DATE: string; CUST_CD: string; PROD_CD: string; QTY: string; PRICE: string; WH_CD?: string; REMARKS?: string }> }>();
+
+  if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+    return c.json({ status: "error", message: "입력할 판매 항목이 없습니다" }, 400);
+  }
+
+  for (const item of body.items) {
+    if (!item.IO_DATE || !item.CUST_CD || !item.PROD_CD || !item.QTY || !item.PRICE) {
+      return c.json({ status: "error", message: "필수 항목(날짜, 거래처, 품목, 수량, 단가)을 모두 입력해주세요" }, 400);
+    }
+  }
+
+  try {
+    const result = await saveSale(c.env, { SaleList: body.items });
+    return c.json({
+      status: "success",
+      data: result,
+      message: `${body.items.length}건 판매 입력 완료`,
+    });
+  } catch (e: any) {
+    console.error("[ERP] SaveSale error:", e);
+    return c.json({ status: "error", message: e.message || "판매 입력 실패" }, 500);
+  }
+});
+
+// ─── POST /purchases - 구매 입력 (이카운트 SavePurchases) ───
+
+erp.post("/purchases", async (c) => {
+  const status = getERPStatus(c.env);
+  if (!status.configured) {
+    return c.json({ status: "error", message: "ERP 인증 정보가 설정되지 않았습니다" }, 400);
+  }
+
+  const body = await c.req.json<{ items: Array<{ IO_DATE: string; CUST_CD: string; PROD_CD: string; QTY: string; PRICE: string; WH_CD?: string; REMARKS?: string }> }>();
+
+  if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+    return c.json({ status: "error", message: "입력할 구매 항목이 없습니다" }, 400);
+  }
+
+  for (const item of body.items) {
+    if (!item.IO_DATE || !item.CUST_CD || !item.PROD_CD || !item.QTY || !item.PRICE) {
+      return c.json({ status: "error", message: "필수 항목(날짜, 공급사, 품목, 수량, 단가)을 모두 입력해주세요" }, 400);
+    }
+  }
+
+  try {
+    const result = await savePurchase(c.env, { PurchaseList: body.items });
+    return c.json({
+      status: "success",
+      data: result,
+      message: `${body.items.length}건 구매 입력 완료`,
+    });
+  } catch (e: any) {
+    console.error("[ERP] SavePurchases error:", e);
+    return c.json({ status: "error", message: e.message || "구매 입력 실패" }, 500);
   }
 });
 

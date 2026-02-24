@@ -25,7 +25,7 @@ echo ""
 # 1. 현재 브랜치 확인
 # ─────────────────────────────────────────
 BRANCH=$(git branch --show-current)
-echo -e "${BLUE}[1/5]${NC} 브랜치: ${BOLD}${BRANCH}${NC}"
+echo -e "${BLUE}[1/6]${NC} 브랜치: ${BOLD}${BRANCH}${NC}"
 
 # ─────────────────────────────────────────
 # 2. 로컬 변경사항 stash → pull
@@ -39,7 +39,7 @@ else
   STASHED=false
 fi
 
-echo -e "${BLUE}[2/5]${NC} Git pull..."
+echo -e "${BLUE}[2/6]${NC} Git pull..."
 git pull origin "$BRANCH" --rebase 2>&1 | sed 's/^/  /'
 
 if [ "$STASHED" = true ]; then
@@ -50,7 +50,7 @@ fi
 # ─────────────────────────────────────────
 # 3. 불필요한 로컬 파일 정리
 # ─────────────────────────────────────────
-echo -e "${BLUE}[3/5]${NC} 로컬 파일 정리..."
+echo -e "${BLUE}[3/6]${NC} 로컬 파일 정리..."
 
 CLEANED=0
 
@@ -128,7 +128,7 @@ fi
 # ─────────────────────────────────────────
 # 4. 의존성 설치
 # ─────────────────────────────────────────
-echo -e "${BLUE}[4/5]${NC} 의존성 확인..."
+echo -e "${BLUE}[4/6]${NC} 의존성 확인..."
 
 if git diff HEAD@{1} --name-only 2>/dev/null | grep -q "frontend-next/package.json"; then
   echo -e "  ${YELLOW}frontend-next 패키지 변경 감지 → npm install${NC}"
@@ -145,9 +145,41 @@ else
 fi
 
 # ─────────────────────────────────────────
-# 5. 최근 작업 내역
+# 5. D1 → 로컬 SQLite 동기화
 # ─────────────────────────────────────────
-echo -e "${BLUE}[5/5]${NC} 최근 커밋:"
+echo -e "${BLUE}[5/6]${NC} D1 데이터베이스 → 로컬 동기화..."
+
+D1_DATA_DIR="D:/c-auto-data"
+D1_BACKUP_DIR="$D1_DATA_DIR/backups"
+D1_DB_NAME="c-auto-db"
+D1_TIMESTAMP=$(date +%Y%m%d_%H%M)
+D1_SQL_FILE="$D1_BACKUP_DIR/${D1_DB_NAME}_${D1_TIMESTAMP}.sql"
+
+mkdir -p "$D1_BACKUP_DIR"
+
+if (cd workers-api && npx wrangler d1 export "$D1_DB_NAME" --remote --output "$D1_SQL_FILE" 2>&1 | tail -1); then
+  D1_SIZE=$(du -h "$D1_SQL_FILE" 2>/dev/null | cut -f1)
+  cp "$D1_SQL_FILE" "$D1_BACKUP_DIR/${D1_DB_NAME}_latest.sql"
+
+  # sqlite3 있으면 DB 파일 생성
+  if command -v sqlite3 &> /dev/null; then
+    rm -f "$D1_DATA_DIR/c-auto.db"
+    sqlite3 "$D1_DATA_DIR/c-auto.db" < "$D1_SQL_FILE"
+  fi
+
+  # 7일 이상 백업 정리
+  find "$D1_BACKUP_DIR" -name "${D1_DB_NAME}_*.sql" -not -name "*latest*" -mtime +7 -delete 2>/dev/null
+
+  D1_COUNT=$(find "$D1_BACKUP_DIR" -name "${D1_DB_NAME}_*.sql" -not -name "*latest*" -type f 2>/dev/null | wc -l)
+  echo -e "  ${GREEN}D1 동기화 완료: ${D1_SIZE} (백업 ${D1_COUNT}개)${NC}"
+else
+  echo -e "  ${YELLOW}D1 동기화 건너뜀 (오프라인 또는 인증 필요)${NC}"
+fi
+
+# ─────────────────────────────────────────
+# 6. 최근 작업 내역
+# ─────────────────────────────────────────
+echo -e "${BLUE}[6/6]${NC} 최근 커밋:"
 echo ""
 git log --oneline --graph -8 | sed 's/^/  /'
 echo ""
