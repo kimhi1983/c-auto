@@ -118,7 +118,18 @@ export default function InventoryPage() {
       const res = await fetch(apiUrl(`/api/v1/inventory/kpros-stock${refresh ? '?refresh=true' : ''}`), { headers: authHeaders() });
       const json = await res.json();
       if (json.status === 'success') {
-        setKprosData(json.data);
+        // 카이코스텍 창고 제외
+        const HIDDEN_WH = '카이코스텍';
+        const raw = json.data as KprosStockData;
+        const filteredWh = raw.items.filter(i => i.warehouseNm !== HIDDEN_WH);
+        const whSummary = raw.warehouses.filter(w => w.name !== HIDDEN_WH);
+        setKprosData({
+          ...raw,
+          items: filteredWh,
+          totalCount: filteredWh.length,
+          totalQty: filteredWh.reduce((s, i) => s + i.sumStockQty, 0),
+          warehouses: whSummary,
+        });
         if (json.stale) setIsStale(true);
       } else {
         setKprosError(json.message || 'KPROS 재고 조회 실패');

@@ -40,29 +40,21 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
-    href: '/inventory',
-    label: '재고 관리',
-    icon: 'box',
+    href: '/erp',
+    label: 'ERP',
+    icon: 'erp',
     children: [
+      { href: '/erp/sales', label: '판매입력' },
+      { href: '/erp/purchases', label: '구매입력' },
+      { href: '/kpros', label: '거래처 관리' },
       { href: '/inventory', label: '재고 현황' },
       { href: '/inventory/logistics', label: '물류 대시보드' },
-      { href: '/inventory/purchases', label: '매입등록' },
-      { href: '/inventory/deliveries', label: '납품등록' },
+      { href: '/inventory/purchases', label: '입고등록' },
+      { href: '/inventory/deliveries', label: '출고등록' },
       { href: '/inventory/warehouse', label: '창고 입출고' },
       { href: '/inventory/coa', label: '성적서(CoA)' },
     ],
   },
-  {
-    href: '/erp',
-    label: 'ERP 연동',
-    icon: 'truck',
-    children: [
-      { href: '/erp', label: 'ERP 현황' },
-      { href: '/erp/sales', label: '판매입력' },
-      { href: '/erp/purchases', label: '구매입력' },
-    ],
-  },
-  { href: '/kpros', label: '거래처 관리', icon: 'database' },
   { href: '/users', label: '사용자 관리', icon: 'users', adminOnly: true },
 ];
 
@@ -117,10 +109,10 @@ function NavIcon({ icon, className }: { icon: string; className?: string }) {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
         </svg>
       );
-    case 'truck':
+    case 'erp':
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
         </svg>
       );
     case 'users':
@@ -257,9 +249,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           )}
           {filteredNav.map((item) => {
-            const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href));
+            const childMatch = item.children?.some(c => pathname === c.href || pathname?.startsWith(c.href + '/'));
+            const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href)) || !!childMatch;
             const hasChildren = item.children && item.children.length > 0;
-            const isExpanded = expandedMenus.includes(item.href) || (hasChildren && pathname?.startsWith(item.href));
+            const isExpanded = expandedMenus.includes(item.href) || (hasChildren && (pathname?.startsWith(item.href) || !!childMatch));
 
             if (hasChildren) {
               return (

@@ -6,7 +6,8 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, desc, like, or, and, count } from "drizzle-orm";
 import { companies } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
-import { isKprosConfigured, getKprosCompanies } from "../services/kpros";
+import { isKprosConfigured, getKprosCompanies, debugCrawlCompanies } from "../services/kpros";
+import { saveCustomer, getERPStatus } from "../services/ecount";
 import type { Env, UserContext } from "../types";
 
 const kpros = new Hono<{ Bindings: Env; Variables: { user: UserContext } }>();
@@ -97,7 +98,7 @@ kpros.get("/companies/:id", async (c) => {
 });
 
 /**
- * POST /companies - 거래처 등록
+ * POST /companies - 거래처 등록 (D1 + 이카운트 ERP 연동)
  */
 kpros.post("/companies", async (c) => {
   const body = await c.req.json<{
@@ -114,12 +115,14 @@ kpros.post("/companies", async (c) => {
     manager_tel?: string;
     manager_email?: string;
     company_type?: string;
+    sync_ecount?: boolean; // 이카운트 연동 여부 (기본 true)
   }>();
 
   if (!body.company_nm?.trim()) {
     return c.json({ status: "error", message: "거래처명은 필수입니다" }, 400);
   }
 
+  // ── Step 1: D1 저장 ──
   const db = drizzle(c.env.DB);
   const [created] = await db
     .insert(companies)
@@ -140,7 +143,53 @@ kpros.post("/companies", async (c) => {
     })
     .returning();
 
-  return c.json({ status: "success", data: created }, 201);
+  // ── Step 2: 이카운트 ERP 연동 (best-effort) ──
+  let ecountResult: { success: boolean; message: string; skipped: boolean } = {
+    success: false,
+    message: "",
+    skipped: true,
+  };
+
+  const syncEcount = body.sync_ecount !== false;
+  const erpStatus = getERPStatus(c.env);
+
+  if (syncEcount && erpStatus.configured && body.biz_no?.trim()) {
+    try {
+      // D1 필드 → 이카운트 SaveBasicCust 필드 매핑
+      const custItem: Record<string, string> = {
+        BUSINESS_NO: body.biz_no.trim(),
+        CUST_NAME: body.company_nm.trim(),
+      };
+      if (body.ceo_nm) custItem.BOSS_NAME = body.ceo_nm;
+      if (body.tel) custItem.TEL_NO = body.tel;
+      if (body.fax) custItem.FAX_NO = body.fax;
+      if (body.email) custItem.EMAIL = body.email;
+      if (body.addr) custItem.ADDR = body.addr;
+      if (body.memo) custItem.REMARK = body.memo;
+
+      await saveCustomer(c.env, { CustList: [custItem] });
+      ecountResult = {
+        success: true,
+        message: "이카운트 ERP 거래처 등록 완료",
+        skipped: false,
+      };
+    } catch (e: any) {
+      console.error("[KPROS] 이카운트 연동 실패:", e.message);
+      ecountResult = {
+        success: false,
+        message: `이카운트 연동 실패: ${e.message}`,
+        skipped: false,
+      };
+    }
+  } else if (!syncEcount) {
+    ecountResult.message = "이카운트 연동 비활성화";
+  } else if (!erpStatus.configured) {
+    ecountResult.message = "이카운트 ERP 인증 정보 미설정";
+  } else if (!body.biz_no?.trim()) {
+    ecountResult.message = "사업자번호 미입력으로 이카운트 연동 건너뜀";
+  }
+
+  return c.json({ status: "success", data: created, ecount: ecountResult }, 201);
 });
 
 /**
@@ -212,6 +261,112 @@ kpros.delete("/companies/:id", async (c) => {
   }
 
   return c.json({ status: "success", message: "거래처가 비활성화되었습니다" });
+});
+
+/**
+ * POST /companies/bulk-import - 크롤링 데이터 벌크 업로드 (upsert by kpros_idx)
+ */
+kpros.post("/companies/bulk-import", async (c) => {
+  const body = await c.req.json<{ items: any[] }>();
+  if (!body.items?.length) {
+    return c.json({ status: "error", message: "items 배열이 비어있습니다" }, 400);
+  }
+
+  const db = drizzle(c.env.DB);
+  let created = 0, updated = 0, skipped = 0;
+
+  for (const item of body.items) {
+    if (!item.company_nm?.trim()) { skipped++; continue; }
+
+    const kprosIdx = item.kpros_idx ? parseInt(item.kpros_idx) : null;
+
+    // kpros_idx로 기존 데이터 확인
+    if (kprosIdx) {
+      const [existing] = await db
+        .select()
+        .from(companies)
+        .where(eq(companies.kprosIdx, kprosIdx))
+        .limit(1);
+
+      if (existing) {
+        await db.update(companies).set({
+          companyNm: item.company_nm || existing.companyNm,
+          tel: item.tel || existing.tel,
+          fax: item.fax || existing.fax,
+          email: item.email || existing.email,
+          addr: item.addr || existing.addr,
+          managerNm: item.manager_nm || existing.managerNm,
+          managerTel: item.mobile || existing.managerTel,
+          managerEmail: item.manager_email || existing.managerEmail,
+          memo: item.memo || existing.memo,
+          companyType: item.buy_sell_type || existing.companyType,
+          updatedAt: new Date().toISOString(),
+        }).where(eq(companies.id, existing.id));
+        updated++;
+        continue;
+      }
+    }
+
+    // 업체명으로 중복 확인
+    const [byName] = await db
+      .select()
+      .from(companies)
+      .where(eq(companies.companyNm, item.company_nm.trim()))
+      .limit(1);
+
+    if (byName) {
+      await db.update(companies).set({
+        kprosIdx: kprosIdx,
+        tel: item.tel || byName.tel,
+        fax: item.fax || byName.fax,
+        email: item.email || byName.email,
+        addr: item.addr || byName.addr,
+        managerNm: item.manager_nm || byName.managerNm,
+        managerTel: item.mobile || byName.managerTel,
+        companyType: item.buy_sell_type || byName.companyType,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(companies.id, byName.id));
+      updated++;
+      continue;
+    }
+
+    // 신규 등록
+    await db.insert(companies).values({
+      companyNm: item.company_nm.trim(),
+      tel: item.tel || null,
+      fax: item.fax || null,
+      email: item.email || null,
+      addr: item.addr || null,
+      managerNm: item.manager_nm || null,
+      managerTel: item.mobile || null,
+      managerEmail: item.email || null,
+      companyType: item.buy_sell_type || null,
+      kprosIdx: kprosIdx,
+      memo: [item.dept, item.manager_rank, item.business].filter(Boolean).join(' / ') || null,
+    });
+    created++;
+  }
+
+  return c.json({
+    status: "success",
+    data: { total: body.items.length, created, updated, skipped },
+    message: `벌크 임포트 완료: 신규 ${created}, 업데이트 ${updated}, 건너뜀 ${skipped}`,
+  });
+});
+
+/**
+ * POST /companies/debug-crawl - KPROS 거래처 크롤링 디버그 (raw 응답 반환)
+ */
+kpros.post("/companies/debug-crawl", async (c) => {
+  if (!isKprosConfigured(c.env)) {
+    return c.json({ status: "error", message: "KPROS 인증 정보 미설정" }, 400);
+  }
+  try {
+    const result = await debugCrawlCompanies(c.env);
+    return c.json({ status: "success", data: result });
+  } catch (e: any) {
+    return c.json({ status: "error", message: e.message, stack: e.stack?.substring(0, 500) }, 500);
+  }
 });
 
 /**
