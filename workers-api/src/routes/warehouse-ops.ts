@@ -14,9 +14,10 @@ const warehouseOps = new Hono<{ Bindings: Env }>();
 
 warehouseOps.use('*', authMiddleware);
 
-// 판매/구매 창고 관련 상태
-const SALES_WH_STATUSES = ['SHIPPING_ORDER', 'PICKING'];
-const PURCHASE_WH_STATUSES = ['RECEIVING_SCHEDULED', 'INSPECTING'];
+// 판매/구매 창고 관련 상태 (ERP_SUBMITTED 포함 → 승인 후 바로 창고에서 보임)
+const SALES_WH_STATUSES = ['ERP_SUBMITTED', 'SHIPPING_ORDER', 'PICKING'];
+const PURCHASE_WH_STATUSES = ['ERP_SUBMITTED', 'RECEIVING_SCHEDULED', 'INSPECTING'];
+const COMPLETED_STATUSES = ['SHIPPED', 'DELIVERED', 'RECEIVED', 'STOCKED'];
 
 const SALES_STEPS = ['ERP_SUBMITTED', 'SHIPPING_ORDER', 'PICKING', 'SHIPPED', 'DELIVERED'] as const;
 const PURCHASE_STEPS = ['ERP_SUBMITTED', 'RECEIVING_SCHEDULED', 'INSPECTING', 'RECEIVED', 'STOCKED'] as const;
@@ -50,22 +51,27 @@ warehouseOps.get('/', async (c) => {
   const db = drizzle(c.env.DB);
   const typeFilter = c.req.query('type');
   const warehouseFilter = c.req.query('warehouse');
+  const includeCompleted = c.req.query('include_completed') === 'true';
+
+  // 상태 목록 결정 (완료 이력 포함 여부)
+  const salesStatuses = includeCompleted ? [...SALES_WH_STATUSES, ...COMPLETED_STATUSES] : SALES_WH_STATUSES;
+  const purchaseStatuses = includeCompleted ? [...PURCHASE_WH_STATUSES, ...COMPLETED_STATUSES] : PURCHASE_WH_STATUSES;
 
   // 창고 관련 상태의 워크플로우만 조회
   const conditions = [];
   if (typeFilter === 'SALES') {
     conditions.push(
-      and(eq(orderWorkflows.workflowType, 'SALES'), inArray(orderWorkflows.status, SALES_WH_STATUSES))
+      and(eq(orderWorkflows.workflowType, 'SALES'), inArray(orderWorkflows.status, salesStatuses))
     );
   } else if (typeFilter === 'PURCHASE') {
     conditions.push(
-      and(eq(orderWorkflows.workflowType, 'PURCHASE'), inArray(orderWorkflows.status, PURCHASE_WH_STATUSES))
+      and(eq(orderWorkflows.workflowType, 'PURCHASE'), inArray(orderWorkflows.status, purchaseStatuses))
     );
   } else {
     conditions.push(
       or(
-        and(eq(orderWorkflows.workflowType, 'SALES'), inArray(orderWorkflows.status, SALES_WH_STATUSES)),
-        and(eq(orderWorkflows.workflowType, 'PURCHASE'), inArray(orderWorkflows.status, PURCHASE_WH_STATUSES)),
+        and(eq(orderWorkflows.workflowType, 'SALES'), inArray(orderWorkflows.status, salesStatuses)),
+        and(eq(orderWorkflows.workflowType, 'PURCHASE'), inArray(orderWorkflows.status, purchaseStatuses)),
       )
     );
   }
@@ -270,11 +276,12 @@ warehouseOps.post('/:id/process', async (c) => {
     .limit(1);
   if (!row) return c.json({ status: 'error', message: '워크플로우를 찾을 수 없습니다' }, 404);
 
-  // 창고 관련 상태인지 검증
+  // 창고 관련 상태인지 검증 (ERP_SUBMITTED 포함)
   const validStatuses = row.workflowType === 'SALES' ? SALES_WH_STATUSES : PURCHASE_WH_STATUSES;
   if (!validStatuses.includes(row.status)) {
     return c.json({ status: 'error', message: '현재 창고 작업 단계가 아닙니다' }, 400);
   }
+  // ERP_SUBMITTED는 이전 단계로 돌아갈 수 없음 (승인 단계 이전은 불가)
 
   const body = await c.req.json<{ action?: string; note?: string }>().catch(() => ({}));
   const steps = getSteps(row.workflowType);

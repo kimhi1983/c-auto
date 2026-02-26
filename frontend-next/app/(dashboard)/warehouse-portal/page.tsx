@@ -54,6 +54,7 @@ const WAREHOUSES: { code: WarehouseCode; label: string; color: string; gradient:
 type ViewTab = 'orders' | 'history' | 'coa';
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  ERP_SUBMITTED: { label: 'ERP전송완료', color: 'text-emerald-700', bg: 'bg-emerald-50' },
   SHIPPING_ORDER: { label: '출고지시', color: 'text-blue-700', bg: 'bg-blue-50' },
   PICKING: { label: '피킹/포장', color: 'text-indigo-700', bg: 'bg-indigo-50' },
   SHIPPED: { label: '출고완료', color: 'text-emerald-700', bg: 'bg-emerald-50' },
@@ -79,8 +80,31 @@ export default function WarehousePortalPage() {
   const [uploadNote, setUploadNote] = useState('');
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [historyTasks, setHistoryTasks] = useState<WorkflowTask[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const currentWh = WAREHOUSES.find(w => w.code === activeWh) || WAREHOUSES[0];
+
+  // 완료 이력 조회
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(apiUrl('/api/v1/warehouse-ops?include_completed=true'), { headers: authHeaders() });
+      if (!res.ok) throw new Error('이력 조회 실패');
+      const data = await res.json();
+      const warehouses: WarehouseGroup[] = data.data?.warehouses || [];
+      const all = warehouses.flatMap(wh => wh.tasks);
+      // 완료 상태만 필터
+      const completed = all.filter(t => ['SHIPPED', 'DELIVERED', 'RECEIVED', 'STOCKED'].includes(t.status));
+      // 현재 창고 매칭
+      const whMatch = warehouses.find(wh =>
+        currentWh.whCodes.some(c => wh.warehouseCd.includes(c)) || wh.warehouseCd === currentWh.label
+      );
+      const whCompleted = (whMatch?.tasks || []).filter(t => ['SHIPPED', 'DELIVERED', 'RECEIVED', 'STOCKED'].includes(t.status));
+      setHistoryTasks(whCompleted.length > 0 ? whCompleted : completed);
+    } catch { setHistoryTasks([]); }
+    finally { setHistoryLoading(false); }
+  }, [currentWh]);
 
   // 출고지시 조회 (현재 작업 중인 건)
   const fetchTasks = useCallback(async () => {
@@ -108,6 +132,7 @@ export default function WarehousePortalPage() {
   }, [currentWh]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
+  useEffect(() => { if (viewTab === 'history') fetchHistory(); }, [viewTab, fetchHistory]);
 
   // 문서 조회
   const fetchDocs = useCallback(async (workflowId: number) => {
@@ -532,13 +557,58 @@ export default function WarehousePortalPage() {
         </div>
       ) : viewTab === 'history' ? (
         /* ─── 처리 이력 ─── */
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-12 text-center">
-          <svg className="w-12 h-12 text-slate-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-slate-500 font-medium">출고/입고 처리 이력</p>
-          <p className="text-xs text-slate-400 mt-1">출고완료 또는 입고완료된 건의 이력이 표시됩니다</p>
-        </div>
+        historyLoading ? (
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-12 text-center shadow-sm">
+            <div className="w-8 h-8 border-[3px] border-t-transparent rounded-full animate-spin mx-auto mb-3" style={{ borderColor: currentWh.color, borderTopColor: 'transparent' }} />
+            <p className="text-sm text-slate-400">이력 불러오는 중...</p>
+          </div>
+        ) : historyTasks.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-12 text-center">
+            <svg className="w-12 h-12 text-slate-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-slate-500 font-medium">처리 완료된 이력이 없습니다</p>
+            <p className="text-xs text-slate-400 mt-1">출고완료 또는 입고완료된 건의 이력이 표시됩니다</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+            <div className="divide-y divide-slate-100">
+              {historyTasks.map(task => {
+                const statusInfo = STATUS_LABELS[task.status] || { label: task.status, color: 'text-slate-600', bg: 'bg-slate-100' };
+                const firstItem = task.items?.[0];
+                return (
+                  <div key={task.id} className="flex items-center gap-4 px-6 py-4">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${task.workflowType === 'SALES' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'}`}>
+                      {task.workflowType === 'SALES' ? (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" /></svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19.5 4.5l-15 15m0 0h11.25m-11.25 0V8.25" /></svg>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm text-slate-800">{task.customerName}</span>
+                        <span className="text-xs text-slate-400">#{task.orderNumber || task.id}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {firstItem?.PROD_DES || firstItem?.PROD_CD || '품목'}
+                        {(task.items?.length || 0) > 1 && ` 외 ${task.items.length - 1}건`}
+                        <span className="mx-1.5">·</span>
+                        {parseDate(task.updatedAt)}
+                      </div>
+                    </div>
+                    {task.documentCount > 0 && (
+                      <span className="px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 shrink-0">CoA {task.documentCount}</span>
+                    )}
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 ${statusInfo.bg} ${statusInfo.color}`}>
+                      {statusInfo.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )
       ) : (
         /* ─── 성적서 관리 ─── */
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
