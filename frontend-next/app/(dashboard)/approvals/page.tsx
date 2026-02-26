@@ -79,19 +79,27 @@ export default function ApprovalsPage() {
     if (!selectedItem) return;
     setProcessing(true);
     try {
-      const newStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';
-      const res = await fetch(apiUrl(`/api/v1/workflows/${selectedItem.id}/status`), {
-        method: 'PATCH',
+      const endpoint = action === 'approve'
+        ? `/api/v1/workflows/${selectedItem.id}/approve`
+        : `/api/v1/workflows/${selectedItem.id}/reject`;
+      const body = action === 'approve'
+        ? { note: actionNote || undefined }
+        : { reason: actionNote || undefined };
+      const res = await fetch(apiUrl(endpoint), {
+        method: 'POST',
         headers: authJsonHeaders(),
-        body: JSON.stringify({ status: newStatus, note: actionNote || undefined }),
+        body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error('처리 실패');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.message || '처리 실패');
+      }
       setSelectedItem(null);
       setActionNote('');
       fetchItems();
-    } catch (err) {
+    } catch (err: any) {
       console.error('승인 처리 실패:', err);
-      alert('처리 중 오류가 발생했습니다.');
+      alert(err.message || '처리 중 오류가 발생했습니다.');
     } finally {
       setProcessing(false);
     }

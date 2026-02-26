@@ -221,6 +221,55 @@ export default function PurchasesInputPage() {
     }
   };
 
+  // ─── 승인 워크플로우 저장 ───
+
+  const handleWorkflowSave = async (action: 'draft' | 'submit') => {
+    if (validRows.length === 0) { setErrorMsg('품목을 입력하세요'); return; }
+    if (!custCd && !custDes) { setErrorMsg('거래처를 선택하세요'); return; }
+
+    setSubmitting(true);
+    setSuccessMsg(null);
+    setErrorMsg(null);
+
+    const items = validRows.map(r => ({
+      PROD_CD: r.PROD_CD,
+      PROD_DES: r.PROD_DES,
+      QTY: r.QTY,
+      PRICE: r.PRICE,
+      UNIT: r.SPEC,
+      SUPPLY_AMT: String((parseFloat(r.QTY) || 0) * (parseFloat(r.PRICE) || 0)),
+      WH_CD: whCd || whDes || '',
+      REMARKS: r.REMARKS,
+    }));
+
+    try {
+      const res = await fetch(apiUrl('/api/v1/workflows'), {
+        method: 'POST',
+        headers: authJsonHeaders(),
+        body: JSON.stringify({
+          workflowType: 'PURCHASE',
+          customerName: custDes || custCd,
+          custCd,
+          ioDate: `${date.year}-${date.month}-${date.day}`,
+          items,
+          totalAmount: totals.supply + totals.vat,
+          action,
+        }),
+      });
+      const json = await res.json();
+      if (json.status === 'success') {
+        setSuccessMsg(json.message || (action === 'submit' ? '승인 요청 완료' : '임시저장 완료'));
+        if (action === 'submit') handleReset();
+      } else {
+        setErrorMsg(json.message || '저장 실패');
+      }
+    } catch {
+      setErrorMsg('서버 연결 오류');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleReset = () => {
     setCustCd('');
     setCustDes('');
@@ -543,14 +592,30 @@ export default function PurchasesInputPage() {
           </table>
         </div>
 
-        {/* ─── 액션 바 (이카운트 동일) ─── */}
+        {/* ─── 액션 바 ─── */}
         <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => handleWorkflowSave('draft')}
+            disabled={validRows.length === 0 || submitting}
+            className="px-4 py-2 bg-white border border-slate-300 text-sm font-semibold text-slate-700 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          >
+            임시저장
+          </button>
+          <button
+            onClick={() => handleWorkflowSave('submit')}
+            disabled={!canSubmit || submitting}
+            className="px-5 py-2 bg-brand-500 text-white font-bold text-sm rounded-lg hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-sm"
+          >
+            {submitting ? '처리 중...' : '승인요청 →'}
+          </button>
+          <div className="w-px h-6 bg-slate-300 mx-1" />
           <button
             onClick={() => setShowConfirm(true)}
             disabled={!canSubmit || submitting}
-            className="px-5 py-2 bg-amber-400 text-slate-900 font-bold text-sm rounded-lg hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-sm"
+            className="px-4 py-2 bg-amber-400 text-slate-900 font-bold text-sm rounded-lg hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-sm"
+            title="이카운트 ERP 직접 전송"
           >
-            {submitting ? '저장 중...' : '저장(F8)'}
+            ERP 전송
           </button>
           <button
             onClick={handleReset}
