@@ -163,6 +163,20 @@ export const orderWorkflows = sqliteTable('order_workflows', {
   index('idx_ow_date').on(table.ioDate),
 ]);
 
+// ─── Workflow Memory (학습 데이터) ───
+export const workflowMemory = sqliteTable('workflow_memory', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  memoryType: text('memory_type').notNull(),
+  memoryKey: text('memory_key').notNull(),
+  memoryValue: text('memory_value').notNull(),
+  frequency: integer('frequency').notNull().default(1),
+  lastUsedAt: text('last_used_at').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_wm_type_key').on(table.memoryType, table.memoryKey),
+  index('idx_wm_type').on(table.memoryType),
+]);
+
 // ─── Workflow Documents (CoA 성적서 등) ───
 export const workflowDocuments = sqliteTable('workflow_documents', {
   id: integer('id').primaryKey({ autoIncrement: true }),

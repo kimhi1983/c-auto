@@ -102,6 +102,10 @@ export default function SalesInputPage() {
   const [recentSales, setRecentSales] = useState<RecentSaleItem[]>([]);
   const [recentCustomers, setRecentCustomers] = useState<Array<{ code: string; name: string }>>([]);
 
+  // 메모리(학습) 데이터
+  const [memoryCusts, setMemoryCusts] = useState<Array<{ custCd: string; custDes: string; frequency: number }>>([]);
+  const [memoryPrices, setMemoryPrices] = useState<Record<string, string>>({});
+
   // UI 상태
   const [productsLoading, setProductsLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -155,11 +159,53 @@ export default function SalesInputPage() {
     } catch { /* ignore */ }
   }, [date]);
 
+  // 학습된 거래처 로드
+  const fetchMemoryCustomers = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/api/v1/memory?type=CUSTOMER&limit=30'), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success') setMemoryCusts(json.data.items || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  // 거래처 선택 시 → 학습된 품목 단가 로드
+  const fetchMemoryPrices = useCallback(async (cCd: string) => {
+    if (!cCd) return;
+    try {
+      const res = await fetch(apiUrl(`/api/v1/memory?type=PRODUCT_PRICE&custCd=${encodeURIComponent(cCd)}`), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success') {
+        const priceMap: Record<string, string> = {};
+        for (const item of json.data.items || []) {
+          if (item.prodCd && item.price) priceMap[item.prodCd] = item.price;
+        }
+        setMemoryPrices(priceMap);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // 거래처 선택 시 → 학습된 창고 자동 배정
+  const fetchMemoryWarehouse = useCallback(async (cCd: string) => {
+    if (!cCd) return;
+    try {
+      const res = await fetch(apiUrl(`/api/v1/memory?type=WAREHOUSE&custCd=${encodeURIComponent(cCd)}`), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success' && json.data.items?.length > 0) {
+        const wh = json.data.items[0];
+        if (wh.whCd && !whCd) {
+          setWhCd(wh.whCd);
+          setWhDes(wh.whDes || wh.whCd);
+        }
+      }
+    } catch { /* ignore */ }
+  }, [whCd]);
+
   useEffect(() => {
     fetchProducts();
     fetchRecentSales();
     fetchWarehouses();
-  }, [fetchProducts, fetchRecentSales]);
+    fetchMemoryCustomers();
+  }, [fetchProducts, fetchRecentSales, fetchMemoryCustomers]);
 
   // 거래처 debounced 검색
   useEffect(() => {
@@ -215,9 +261,12 @@ export default function SalesInputPage() {
   };
 
   const selectProduct = (rowId: string, product: ProductItem) => {
+    // 학습된 단가 우선 적용 → 없으면 마스터 단가
+    const memPrice = memoryPrices[product.PROD_CD];
+    const price = memPrice || product.PRICE || '';
     setRows(rows.map(r =>
       r.id === rowId
-        ? { ...r, PROD_CD: product.PROD_CD, PROD_DES: product.PROD_DES, SPEC: product.UNIT || '', PRICE: product.PRICE || r.PRICE }
+        ? { ...r, PROD_CD: product.PROD_CD, PROD_DES: product.PROD_DES, SPEC: product.UNIT || '', PRICE: price || r.PRICE }
         : r
     ));
     setOpenDropdown(null);
@@ -273,6 +322,15 @@ export default function SalesInputPage() {
       const json = await res.json();
       if (json.status === 'success') {
         setSuccessMsg(json.message || `${items.length}건 판매 입력 완료`);
+        // ERP 전송 성공 시에도 패턴 학습
+        fetch(apiUrl('/api/v1/memory/learn'), {
+          method: 'POST',
+          headers: authJsonHeaders(),
+          body: JSON.stringify({
+            custCd, custDes, whCd, whDes, workflowType: 'SALES',
+            items: validRows.map(r => ({ PROD_CD: r.PROD_CD, PROD_DES: r.PROD_DES, PRICE: r.PRICE, UNIT: r.SPEC })),
+          }),
+        }).catch(() => {});
         handleReset();
         fetchRecentSales();
       } else {
@@ -324,6 +382,13 @@ export default function SalesInputPage() {
       const json = await res.json();
       if (json.status === 'success') {
         setSuccessMsg(json.message || (action === 'submit' ? '승인 요청 완료' : '임시저장 완료'));
+        // 패턴 학습 (비동기, 실패 무시)
+        fetch(apiUrl('/api/v1/memory/learn'), {
+          method: 'POST',
+          headers: authJsonHeaders(),
+          body: JSON.stringify({ custCd, custDes, whCd, whDes, items, workflowType: 'SALES' }),
+        }).catch(() => {});
+        fetchMemoryCustomers();
         if (action === 'submit') handleReset();
       } else {
         setErrorMsg(json.message || '저장 실패');
@@ -361,6 +426,8 @@ export default function SalesInputPage() {
     setCustDes(company.companyNm);
     setCustSearch('');
     setShowCustDropdown(false);
+    fetchMemoryPrices(company.companyCd);
+    fetchMemoryWarehouse(company.companyCd);
   };
 
   // 최근 거래처 선택
@@ -369,6 +436,18 @@ export default function SalesInputPage() {
     setCustDes(c.name);
     setCustSearch('');
     setShowCustDropdown(false);
+    fetchMemoryPrices(c.code);
+    fetchMemoryWarehouse(c.code);
+  };
+
+  // 학습된 거래처 선택
+  const selectMemoryCust = (mc: { custCd: string; custDes: string }) => {
+    setCustCd(mc.custCd);
+    setCustDes(mc.custDes);
+    setCustSearch('');
+    setShowCustDropdown(false);
+    fetchMemoryPrices(mc.custCd);
+    fetchMemoryWarehouse(mc.custCd);
   };
 
   // ─── 셀 스타일 ───
@@ -477,24 +556,46 @@ export default function SalesInputPage() {
                         ))
                       )
                     ) : (
-                      /* 검색어 없을 때 최근 거래처 목록 */
-                      recentCustomers.length > 0 ? (
-                        <>
-                          <div className="px-3 py-1.5 text-xs text-slate-400 bg-slate-50 border-b border-slate-100">최근 거래처</div>
-                          {recentCustomers.map(c => (
-                            <button
-                              key={c.code}
-                              onClick={() => selectRecentCust(c)}
-                              className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
-                            >
-                              <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 shrink-0">{c.code}</code>
-                              <span className="text-slate-800 truncate flex-1">{c.name}</span>
-                            </button>
-                          ))}
-                        </>
-                      ) : (
-                        <div className="px-3 py-3 text-xs text-slate-400 text-center">거래처명을 2자 이상 입력하세요</div>
-                      )
+                      /* 검색어 없을 때: 학습된 거래처 + 최근 거래처 */
+                      <>
+                        {memoryCusts.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 text-xs text-amber-600 bg-amber-50/50 border-b border-slate-100 flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a6 6 0 00-6 6c0 1.8.8 3.4 2 4.5V15a1 1 0 001 1h6a1 1 0 001-1v-2.5A6 6 0 0010 2zm-1 14v1a1 1 0 102 0v-1H9z"/></svg>
+                              학습된 거래처
+                            </div>
+                            {memoryCusts.map(mc => (
+                              <button
+                                key={mc.custCd}
+                                onClick={() => selectMemoryCust(mc)}
+                                className="w-full text-left px-3 py-2 hover:bg-amber-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
+                              >
+                                <code className="text-xs bg-amber-100 px-1.5 py-0.5 rounded text-amber-700 shrink-0">{mc.custCd}</code>
+                                <span className="text-slate-800 truncate flex-1">{mc.custDes}</span>
+                                <span className="text-xs text-slate-400 shrink-0">{mc.frequency}회</span>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {recentCustomers.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 text-xs text-slate-400 bg-slate-50 border-b border-slate-100">최근 거래처 (ERP)</div>
+                            {recentCustomers.map(c => (
+                              <button
+                                key={c.code}
+                                onClick={() => selectRecentCust(c)}
+                                className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
+                              >
+                                <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 shrink-0">{c.code}</code>
+                                <span className="text-slate-800 truncate flex-1">{c.name}</span>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {memoryCusts.length === 0 && recentCustomers.length === 0 && (
+                          <div className="px-3 py-3 text-xs text-slate-400 text-center">거래처명을 2자 이상 입력하세요</div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

@@ -1,7 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
+
+interface CompanyResult {
+  companyCd: string;
+  companyNm: string;
+  ceoNm?: string;
+}
 
 // ─── Types ───
 
@@ -91,6 +97,21 @@ export default function PurchasesInputPage() {
   const [recentPurchases, setRecentPurchases] = useState<RecentPurchaseItem[]>([]);
   const [recentSuppliers, setRecentSuppliers] = useState<Array<{ code: string; name: string }>>([]);
 
+  // 메모리(학습) 데이터
+  const [memoryCusts, setMemoryCusts] = useState<Array<{ custCd: string; custDes: string; frequency: number }>>([]);
+  const [memoryPrices, setMemoryPrices] = useState<Record<string, string>>({});
+
+  // 거래처 자동완성 상태
+  const [custSearch, setCustSearch] = useState('');
+  const [custResults, setCustResults] = useState<CompanyResult[]>([]);
+  const [custLoading, setCustLoading] = useState(false);
+  const [showCustDropdown, setShowCustDropdown] = useState(false);
+  const custDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 입고창고 드롭다운
+  const [warehouseList, setWarehouseList] = useState<Array<{ code: string; name: string }>>([]);
+  const [showWhDropdown, setShowWhDropdown] = useState(false);
+
   // UI 상태
   const [productsLoading, setProductsLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -133,10 +154,113 @@ export default function PurchasesInputPage() {
     } catch { /* ignore */ }
   }, [date]);
 
+  // 학습된 거래처 로드
+  const fetchMemoryCustomers = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/api/v1/memory?type=CUSTOMER&limit=30'), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success') setMemoryCusts(json.data.items || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  // 거래처별 학습된 단가 로드
+  const fetchMemoryPrices = useCallback(async (cCd: string) => {
+    if (!cCd) return;
+    try {
+      const res = await fetch(apiUrl(`/api/v1/memory?type=PRODUCT_PRICE&custCd=${encodeURIComponent(cCd)}`), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success') {
+        const priceMap: Record<string, string> = {};
+        for (const item of json.data.items || []) {
+          if (item.prodCd && item.price) priceMap[item.prodCd] = item.price;
+        }
+        setMemoryPrices(priceMap);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // 거래처별 학습된 창고 자동 배정
+  const fetchMemoryWarehouse = useCallback(async (cCd: string) => {
+    if (!cCd) return;
+    try {
+      const res = await fetch(apiUrl(`/api/v1/memory?type=WAREHOUSE&custCd=${encodeURIComponent(cCd)}`), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success' && json.data.items?.length > 0) {
+        const wh = json.data.items[0];
+        if (wh.whCd && !whCd) {
+          setWhCd(wh.whCd);
+          setWhDes(wh.whDes || wh.whCd);
+        }
+      }
+    } catch { /* ignore */ }
+  }, [whCd]);
+
+  // 거래처 debounced 검색
+  useEffect(() => {
+    if (custDebounceRef.current) clearTimeout(custDebounceRef.current);
+    if (custSearch.length < 2) { setCustResults([]); return; }
+    setCustLoading(true);
+    custDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(apiUrl(`/api/v1/kpros/companies?search=${encodeURIComponent(custSearch)}&limit=10`), { headers: authHeaders() });
+        const json = await res.json();
+        if (json.status === 'success') setCustResults(json.data?.companies || []);
+      } catch { /* ignore */ } finally { setCustLoading(false); }
+    }, 300);
+    return () => { if (custDebounceRef.current) clearTimeout(custDebounceRef.current); };
+  }, [custSearch]);
+
+  // 창고 목록 로드
+  const fetchWarehouses = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/v1/inventory/kpros-stock'), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success' && json.data?.warehouses) {
+        const HIDDEN_WH = '카이코스텍';
+        setWarehouseList(
+          json.data.warehouses
+            .filter((w: { name: string }) => w.name !== HIDDEN_WH)
+            .map((w: { name: string; code?: string }) => ({ code: w.code || w.name, name: w.name }))
+        );
+      }
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => {
     fetchProducts();
     fetchRecentPurchases();
-  }, [fetchProducts, fetchRecentPurchases]);
+    fetchMemoryCustomers();
+    fetchWarehouses();
+  }, [fetchProducts, fetchRecentPurchases, fetchMemoryCustomers]);
+
+  // ─── 거래처 선택 ───
+
+  const selectCustomer = (company: CompanyResult) => {
+    setCustCd(company.companyCd);
+    setCustDes(company.companyNm);
+    setCustSearch('');
+    setShowCustDropdown(false);
+    fetchMemoryPrices(company.companyCd);
+    fetchMemoryWarehouse(company.companyCd);
+  };
+
+  const selectRecentSupplier = (c: { code: string; name: string }) => {
+    setCustCd(c.code);
+    setCustDes(c.name);
+    setCustSearch('');
+    setShowCustDropdown(false);
+    fetchMemoryPrices(c.code);
+    fetchMemoryWarehouse(c.code);
+  };
+
+  const selectMemoryCust = (mc: { custCd: string; custDes: string }) => {
+    setCustCd(mc.custCd);
+    setCustDes(mc.custDes);
+    setCustSearch('');
+    setShowCustDropdown(false);
+    fetchMemoryPrices(mc.custCd);
+    fetchMemoryWarehouse(mc.custCd);
+  };
 
   // ─── 행 관리 ───
 
@@ -151,9 +275,11 @@ export default function PurchasesInputPage() {
   };
 
   const selectProduct = (rowId: string, product: ProductItem) => {
+    const memPrice = memoryPrices[product.PROD_CD];
+    const price = memPrice || product.COST || product.PRICE || '';
     setRows(rows.map(r =>
       r.id === rowId
-        ? { ...r, PROD_CD: product.PROD_CD, PROD_DES: product.PROD_DES, SPEC: product.UNIT || '', PRICE: product.COST || product.PRICE || r.PRICE }
+        ? { ...r, PROD_CD: product.PROD_CD, PROD_DES: product.PROD_DES, SPEC: product.UNIT || '', PRICE: price || r.PRICE }
         : r
     ));
     setOpenDropdown(null);
@@ -209,6 +335,14 @@ export default function PurchasesInputPage() {
       const json = await res.json();
       if (json.status === 'success') {
         setSuccessMsg(json.message || `${items.length}건 구매 입력 완료`);
+        // ERP 전송 성공 시 패턴 학습
+        fetch(apiUrl('/api/v1/memory/learn'), {
+          method: 'POST', headers: authJsonHeaders(),
+          body: JSON.stringify({
+            custCd, custDes, whCd, whDes, workflowType: 'PURCHASE',
+            items: validRows.map(r => ({ PROD_CD: r.PROD_CD, PROD_DES: r.PROD_DES, PRICE: r.PRICE, UNIT: r.SPEC })),
+          }),
+        }).catch(() => {});
         handleReset();
         fetchRecentPurchases();
       } else {
@@ -259,6 +393,12 @@ export default function PurchasesInputPage() {
       const json = await res.json();
       if (json.status === 'success') {
         setSuccessMsg(json.message || (action === 'submit' ? '승인 요청 완료' : '임시저장 완료'));
+        // 패턴 학습
+        fetch(apiUrl('/api/v1/memory/learn'), {
+          method: 'POST', headers: authJsonHeaders(),
+          body: JSON.stringify({ custCd, custDes, whCd, whDes, items, workflowType: 'PURCHASE' }),
+        }).catch(() => {});
+        fetchMemoryCustomers();
         if (action === 'submit') handleReset();
       } else {
         setErrorMsg(json.message || '저장 실패');
@@ -289,11 +429,7 @@ export default function PurchasesInputPage() {
     ).slice(0, 50);
   };
 
-  const handleCustChange = (value: string) => {
-    setCustCd(value);
-    const found = recentSuppliers.find(c => c.code === value);
-    setCustDes(found ? found.name : '');
-  };
+  // (handleCustChange는 드롭다운 선택으로 대체됨)
 
   // ─── 셀 스타일 ───
   const inputCls = 'w-full px-3 py-2.5 text-sm border-0 bg-transparent focus:outline-none focus:bg-orange-50/50';
@@ -358,31 +494,100 @@ export default function PurchasesInputPage() {
               </select>
             </div>
 
-            {/* 거래처 */}
+            {/* 거래처 - 자동완성 */}
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-500 w-16 shrink-0">거래처</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={custCd}
-                  onChange={e => handleCustChange(e.target.value)}
-                  placeholder="거래처"
-                  list="cust-list-purchase"
-                  className={`${headerInputCls} w-28`}
-                />
-                <datalist id="cust-list-purchase">
-                  {recentSuppliers.map(c => (
-                    <option key={c.code} value={c.code}>{c.name}</option>
-                  ))}
-                </datalist>
-              </div>
               <input
                 type="text"
-                value={custDes}
-                onChange={e => setCustDes(e.target.value)}
-                placeholder=""
-                className={`${headerInputCls} flex-1 bg-slate-50`}
+                value={custCd}
+                readOnly
+                placeholder="코드"
+                className={`${headerInputCls} w-28 bg-slate-50 cursor-default`}
               />
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={showCustDropdown ? custSearch : custDes}
+                  onChange={e => { setCustSearch(e.target.value); setShowCustDropdown(true); }}
+                  onFocus={() => setShowCustDropdown(true)}
+                  placeholder="거래처명 검색 (2자 이상)"
+                  className={`${headerInputCls} w-full`}
+                />
+                {custLoading && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+                {showCustDropdown && (
+                  <div className="absolute z-50 top-full left-0 mt-0.5 w-full bg-white border border-slate-300 rounded-lg shadow-xl max-h-52 overflow-y-auto">
+                    {custSearch.length >= 2 ? (
+                      custResults.length === 0 && !custLoading ? (
+                        <div className="px-3 py-3 text-xs text-slate-400 text-center">검색 결과 없음</div>
+                      ) : (
+                        custResults.map(c => (
+                          <button
+                            key={c.companyCd}
+                            onClick={() => selectCustomer(c)}
+                            className="w-full text-left px-3 py-2 hover:bg-orange-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
+                          >
+                            <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 shrink-0">{c.companyCd}</code>
+                            <span className="text-slate-800 truncate flex-1">{c.companyNm}</span>
+                            {c.ceoNm && <span className="text-xs text-slate-400 shrink-0">{c.ceoNm}</span>}
+                          </button>
+                        ))
+                      )
+                    ) : (
+                      <>
+                        {memoryCusts.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 text-xs text-amber-600 bg-amber-50/50 border-b border-slate-100 flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a6 6 0 00-6 6c0 1.8.8 3.4 2 4.5V15a1 1 0 001 1h6a1 1 0 001-1v-2.5A6 6 0 0010 2zm-1 14v1a1 1 0 102 0v-1H9z"/></svg>
+                              학습된 거래처
+                            </div>
+                            {memoryCusts.map(mc => (
+                              <button
+                                key={mc.custCd}
+                                onClick={() => selectMemoryCust(mc)}
+                                className="w-full text-left px-3 py-2 hover:bg-amber-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
+                              >
+                                <code className="text-xs bg-amber-100 px-1.5 py-0.5 rounded text-amber-700 shrink-0">{mc.custCd}</code>
+                                <span className="text-slate-800 truncate flex-1">{mc.custDes}</span>
+                                <span className="text-xs text-slate-400 shrink-0">{mc.frequency}회</span>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {recentSuppliers.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 text-xs text-slate-400 bg-slate-50 border-b border-slate-100">최근 거래처 (ERP)</div>
+                            {recentSuppliers.map(c => (
+                              <button
+                                key={c.code}
+                                onClick={() => selectRecentSupplier(c)}
+                                className="w-full text-left px-3 py-2 hover:bg-orange-50 text-sm flex items-center gap-2 transition border-b border-slate-100 last:border-0"
+                              >
+                                <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 shrink-0">{c.code}</code>
+                                <span className="text-slate-800 truncate flex-1">{c.name}</span>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {memoryCusts.length === 0 && recentSuppliers.length === 0 && (
+                          <div className="px-3 py-3 text-xs text-slate-400 text-center">거래처명을 2자 이상 입력하세요</div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              {custCd && (
+                <button
+                  onClick={() => { setCustCd(''); setCustDes(''); setCustSearch(''); }}
+                  className="w-6 h-6 rounded-full bg-slate-200 inline-flex items-center justify-center hover:bg-slate-300 transition shrink-0"
+                >
+                  <svg className="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
             </div>
 
             {/* 담당자 (표시만) */}
@@ -392,23 +597,51 @@ export default function PurchasesInputPage() {
               <input type="text" placeholder="" className={`${headerInputCls} flex-1 bg-slate-50`} readOnly />
             </div>
 
-            {/* 입고창고 */}
+            {/* 입고창고 - KPROS 창고 드롭다운 */}
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-500 w-16 shrink-0">입고창고</label>
               <input
                 type="text"
                 value={whCd}
-                onChange={e => setWhCd(e.target.value)}
-                placeholder="입고창고"
-                className={`${headerInputCls} w-28`}
+                readOnly
+                placeholder="코드"
+                className={`${headerInputCls} w-28 bg-slate-50 cursor-default`}
               />
-              <input
-                type="text"
-                value={whDes}
-                onChange={e => setWhDes(e.target.value)}
-                placeholder=""
-                className={`${headerInputCls} flex-1 bg-slate-50`}
-              />
+              <div className="relative flex-1">
+                <button
+                  type="button"
+                  onClick={() => setShowWhDropdown(!showWhDropdown)}
+                  className={`${headerInputCls} w-full text-left flex items-center justify-between cursor-pointer`}
+                >
+                  <span className={whDes ? 'text-slate-800' : 'text-slate-400'}>{whDes || '창고 선택'}</span>
+                  <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {showWhDropdown && (
+                  <div className="absolute z-50 top-full left-0 mt-0.5 w-full bg-white border border-slate-300 rounded-lg shadow-xl max-h-52 overflow-y-auto">
+                    {warehouseList.length === 0 ? (
+                      <div className="px-3 py-3 text-xs text-slate-400 text-center">창고 목록 로딩 중...</div>
+                    ) : (
+                      warehouseList.map(w => (
+                        <button
+                          key={w.code}
+                          onClick={() => { setWhCd(w.code); setWhDes(w.name); setShowWhDropdown(false); }}
+                          className={`w-full text-left px-3 py-2 hover:bg-orange-50 text-sm transition border-b border-slate-100 last:border-0 ${whCd === w.code ? 'bg-orange-50 text-orange-700 font-medium' : 'text-slate-700'}`}
+                        >
+                          {w.name}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+              {whCd && (
+                <button
+                  onClick={() => { setWhCd(''); setWhDes(''); }}
+                  className="w-6 h-6 rounded-full bg-slate-200 inline-flex items-center justify-center hover:bg-slate-300 transition shrink-0"
+                >
+                  <svg className="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
             </div>
 
             {/* 거래유형 */}
@@ -706,8 +939,8 @@ export default function PurchasesInputPage() {
       )}
 
       {/* 드롭다운 닫기용 오버레이 */}
-      {openDropdown && (
-        <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
+      {(openDropdown || showCustDropdown || showWhDropdown) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setOpenDropdown(null); setShowCustDropdown(false); setShowWhDropdown(false); }} />
       )}
     </div>
   );
