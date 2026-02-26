@@ -276,15 +276,14 @@ warehouseOps.post('/:id/process', async (c) => {
     .limit(1);
   if (!row) return c.json({ status: 'error', message: '워크플로우를 찾을 수 없습니다' }, 404);
 
-  // 창고 관련 상태인지 검증 (ERP_SUBMITTED 포함)
-  const validStatuses = row.workflowType === 'SALES' ? SALES_WH_STATUSES : PURCHASE_WH_STATUSES;
-  if (!validStatuses.includes(row.status)) {
-    return c.json({ status: 'error', message: '현재 창고 작업 단계가 아닙니다' }, 400);
+  // STEPS 배열 내 상태인지 검증 (최종 단계 제외 — 모든 중간 단계에서 처리 가능)
+  const steps = getSteps(row.workflowType);
+  const lastStep = steps[steps.length - 1];
+  if (!steps.includes(row.status as any) || row.status === lastStep) {
+    return c.json({ status: 'error', message: '현재 처리할 수 없는 단계입니다' }, 400);
   }
-  // ERP_SUBMITTED는 이전 단계로 돌아갈 수 없음 (승인 단계 이전은 불가)
 
   const body = await c.req.json<{ action?: string; note?: string }>().catch(() => ({}));
-  const steps = getSteps(row.workflowType);
   const currentIdx = steps.indexOf(row.status as any);
   const action = body.action || 'next';
 
