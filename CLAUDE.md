@@ -4,25 +4,13 @@
 KPROS 업무 자동화 플랫폼. 이메일 AI 분석, 파일 관리, 재고 추적, ERP 연동을 수행한다.
 
 ## 기술 스택
-- **Backend**: Python 3.14 + FastAPI + SQLAlchemy 2.0 + Alembic
+- **Backend**: Cloudflare Workers + Hono + TypeScript + D1 Database
 - **Frontend**: Next.js 16 + React 19 + TypeScript 5.9 + Tailwind CSS 3.4
-- **Workers API**: Cloudflare Workers + Hono + TypeScript + D1 Database
 - **AI**: Anthropic Claude (정밀분석), Google Gemini 2.0 Flash (빠른분류), Workers AI (fallback)
 - **Infra**: Cloudflare Workers/D1/Pages, Dropbox API, Ecount ERP
 
 ## 핵심 디렉토리 구조
 ```
-app/                          # Python FastAPI 백엔드
-├── agents/                   # 업무자동화 에이전트 (오케스트레이터 패턴)
-├── api/v1/                   # REST API 라우트 (8개 모듈)
-├── core/ai_selector.py       # Claude/Gemini AI 호출 헬퍼
-├── models/                   # SQLAlchemy ORM 모델 (7개)
-├── modules/                  # 비즈니스 로직 모듈
-├── database/                 # DB 설정
-├── auth/                     # JWT 인증
-├── utils/                    # 로깅, 응답 스키마
-└── main.py                   # FastAPI 진입점
-
 frontend-next/                # Next.js 프론트엔드
 ├── app/
 │   ├── login/page.tsx        # 로그인 페이지
@@ -34,18 +22,29 @@ frontend-next/                # Next.js 프론트엔드
 │       ├── files/            # 파일 검색
 │       ├── ai-docs/          # AI 문서 생성
 │       ├── archives/         # 보고서 아카이브
-│       ├── inventory/        # 재고 분석
-│       ├── erp/              # ERP 연동
+│       ├── inventory/        # 재고 분석 (warehouse/logistics/deliveries/purchases/coa)
+│       ├── erp/              # ERP 연동 (sales/purchases)
+│       ├── approvals/        # 승인관리
+│       ├── workflows/        # 주문처리 워크플로우
+│       ├── warehouse-ops/    # 창고작업
+│       ├── warehouse-portal/ # 출고/입고 관리
+│       ├── kpros/            # 거래처관리
 │       ├── market-report/    # 시장 보고서
 │       └── materials/        # 원자재 시세
 └── lib/api.ts                # API 클라이언트 유틸
 
 workers-api/                  # Cloudflare Workers API (TypeScript + Hono)
 ├── src/
-│   ├── index.ts              # 라우터 진입점
+│   ├── index.ts              # 라우터 진입점 (20개 모듈)
 │   ├── routes/               # API 라우트 모듈
-│   └── middleware/            # CORS, 인증 미들웨어
+│   ├── services/             # 외부 서비스 (Dropbox, eCount, Gmail, KPROS)
+│   ├── middleware/            # CORS, 인증 미들웨어
+│   └── db/schema.ts          # Drizzle ORM 스키마
+├── migrations/               # D1 마이그레이션 (13개)
 └── wrangler.toml             # Workers 설정
+
+sync.sh                       # 집/회사 작업 동기화 스크립트
+CLAUDE.md                     # 에이전트 팀 워크플로우 (이 파일)
 ```
 
 ---
@@ -158,7 +157,7 @@ workers-api/                  # Cloudflare Workers API (TypeScript + Hono)
 - **의존성 최소화**: 새 라이브러리 추가 전 기존 도구로 가능한지 확인
 
 **설계 체크리스트**:
-- 이 기능은 어느 레이어에 속하는가? (Workers API / FastAPI / Frontend)
+- 이 기능은 어느 레이어에 속하는가? (Workers API / Frontend)
 - 기존 유사 기능이 있는가? 참고할 패턴은?
 - API 엔드포인트 네이밍 컨벤션을 따르는가?
 - 프론트엔드 라우트 구조와 일치하는가?
@@ -199,16 +198,7 @@ workers-api/                  # Cloudflare Workers API (TypeScript + Hono)
 
 ## 역할 5: Backend 에이전트 — 서버 구현
 
-**책임**: Python/FastAPI, Cloudflare Workers(Hono), API, DB, 비즈니스 로직
-
-### FastAPI 백엔드 규칙
-- 새 API 라우트: `app/api/v1/` 아래 생성, `app/api/v1/__init__.py`에 라우터 등록
-- AI 호출: `app/core/ai_selector.py`의 `ask_claude`, `ask_gemini` 사용
-- 모델: `app/models/`에 정의, Alembic 마이그레이션 필요시 생성
-- 로깅: `app/utils/logger.py`의 `setup_logger` 사용
-- 응답 스키마: `app/utils/response_models.py`에 정의
-- 에이전트 추가: `app/agents/base.py`의 `BaseAgent` 상속
-- 환경변수: `os.getenv()` 사용, 새 변수는 `.env.example`에 추가
+**책임**: Cloudflare Workers(Hono), API, D1 Database, 비즈니스 로직
 
 ### Cloudflare Workers API 규칙
 - 프레임워크: Hono (TypeScript)
@@ -304,9 +294,6 @@ cd frontend-next && npm run build
 
 # Workers API TypeScript 체크
 cd workers-api && npx wrangler deploy --dry-run
-
-# FastAPI 임포트 테스트
-python -c "from app.main import app"
 ```
 
 ---
