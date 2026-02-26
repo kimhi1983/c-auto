@@ -149,15 +149,20 @@ workflows.get('/summary', async (c) => {
     sales: { total: 0, active: 0, completed: 0, pendingApproval: 0, byStatus: {} as Record<string, number> },
     purchase: { total: 0, active: 0, completed: 0, pendingApproval: 0, byStatus: {} as Record<string, number> },
     approval: { pending: 0, approved: 0, rejected: 0 },
+    workflow: { erpSubmitted: 0, warehouseProcessing: 0, completed: 0 },
   };
+
+  const warehouseStatuses = ['SHIPPING_ORDER', 'PICKING', 'RECEIVING_SCHEDULED', 'INSPECTING'];
+  const completedStatuses = ['DELIVERED', 'STOCKED', 'SHIPPED', 'RECEIVED'];
 
   for (const r of rows) {
     const key = r.workflowType === 'SALES' ? 'sales' : 'purchase';
     summary[key].total += r.count;
     summary[key].byStatus[r.status] = r.count;
 
-    if (r.status === 'DELIVERED' || r.status === 'STOCKED') {
+    if (completedStatuses.includes(r.status)) {
       summary[key].completed += r.count;
+      summary.workflow.completed += r.count;
     } else if (r.status === 'PENDING_APPROVAL') {
       summary[key].pendingApproval += r.count;
       summary.approval.pending += r.count;
@@ -165,6 +170,12 @@ workflows.get('/summary', async (c) => {
       summary.approval.approved += r.count;
     } else if (r.status === 'REJECTED') {
       summary.approval.rejected += r.count;
+    } else if (r.status === 'ERP_SUBMITTED') {
+      summary[key].active += r.count;
+      summary.workflow.erpSubmitted += r.count;
+    } else if (warehouseStatuses.includes(r.status)) {
+      summary[key].active += r.count;
+      summary.workflow.warehouseProcessing += r.count;
     } else if (r.status !== 'DRAFT') {
       summary[key].active += r.count;
     }
@@ -309,9 +320,17 @@ workflows.post('/:id/approve', async (c) => {
   const body = await c.req.json<{ note?: string; items?: any[]; totalAmount?: number }>().catch(() => ({}));
   const now = new Date().toISOString();
 
+  // 승인 → 자동으로 ERP_SUBMITTED까지 전환 (실제 ERP API 미호출)
   const update: Record<string, any> = {
-    status: 'APPROVED',
+    status: 'ERP_SUBMITTED',
     approvedAt: now,
+    erpSubmittedAt: now,
+    erpResult: JSON.stringify({
+      mode: 'simulation',
+      message: 'ERP 자동전송 (시뮬레이션 - 실제 미전송)',
+      approvedAt: now,
+      orderNumber: row.orderNumber,
+    }),
     updatedAt: now,
   };
   if (body.note) update.note = body.note;
@@ -323,8 +342,8 @@ workflows.post('/:id/approve', async (c) => {
 
   return c.json({
     status: 'success',
-    message: '승인되었습니다. ERP 전표 생성이 필요합니다.',
-    data: { id, status: 'APPROVED' },
+    message: '승인 완료 → ERP 전표 자동 생성 (시뮬레이션)',
+    data: { id, status: 'ERP_SUBMITTED', erpMode: 'simulation' },
   });
 });
 

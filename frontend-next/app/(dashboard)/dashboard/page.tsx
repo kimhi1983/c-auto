@@ -19,6 +19,13 @@ interface ExchangeRate {
   updated_at: string;
 }
 
+interface WorkflowSummary {
+  sales: { total: number; active: number; completed: number; pendingApproval: number; byStatus: Record<string, number> };
+  purchase: { total: number; active: number; completed: number; pendingApproval: number; byStatus: Record<string, number> };
+  approval: { pending: number; approved: number; rejected: number };
+  workflow: { erpSubmitted: number; warehouseProcessing: number; completed: number };
+}
+
 interface ArchiveStats {
   total_archives: number;
   recent_7days: number;
@@ -93,18 +100,20 @@ export default function DashboardPage() {
   const [recentEmails, setRecentEmails] = useState<any[]>([]);
   const [archiveStats, setArchiveStats] = useState<ArchiveStats | null>(null);
   const [recentDocs, setRecentDocs] = useState<DocHistory[]>([]);
+  const [wfSummary, setWfSummary] = useState<WorkflowSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        const [emailStatsRes, emailListRes, invRes, rateRes, archiveRes, docsRes] = await Promise.allSettled([
+        const [emailStatsRes, emailListRes, invRes, rateRes, archiveRes, docsRes, wfRes] = await Promise.allSettled([
           fetch(apiUrl('/api/v1/emails/stats'), { headers: getAuthHeaders() }),
           fetch(apiUrl('/api/v1/emails/?limit=10'), { headers: getAuthHeaders() }),
           fetch(apiUrl('/api/v1/inventory/stats'), { headers: getAuthHeaders() }),
           fetch(apiUrl('/api/v1/exchange-rates/current')),
           fetch(apiUrl('/api/v1/archives/stats'), { headers: getAuthHeaders() }),
           fetch(apiUrl('/api/v1/ai-docs/history?page_size=3'), { headers: getAuthHeaders() }),
+          fetch(apiUrl('/api/v1/workflows/summary'), { headers: getAuthHeaders() }),
         ]);
 
         if (emailStatsRes.status === 'fulfilled' && emailStatsRes.value.ok) {
@@ -140,6 +149,11 @@ export default function DashboardPage() {
           const docsData = await docsRes.value.json();
           if (docsData.status === 'success') setRecentDocs(docsData.documents || []);
         }
+
+        if (wfRes.status === 'fulfilled' && wfRes.value.ok) {
+          const wfData = await wfRes.value.json();
+          if (wfData.status === 'success') setWfSummary(wfData.data);
+        }
       } catch {
         // silent
       } finally {
@@ -168,6 +182,28 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold text-slate-900">대시보드</h1>
         <p className="text-sm text-slate-500 mt-1">C-Auto 스마트 이메일 분석 시스템 현황</p>
       </div>
+
+      {/* Workflow Summary */}
+      {loading ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
+      ) : wfSummary && (wfSummary.sales.total + wfSummary.purchase.total) > 0 ? (
+        <div className="animate-fadeInUp">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-base font-bold text-slate-900">주문 워크플로우 현황</h3>
+            <a href="/approvals" className="text-sm text-brand-600 hover:text-brand-700 font-medium">승인관리 &rarr;</a>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <StatCard title="판매 주문" value={wfSummary.sales.total} icon="📦" color="text-blue-700" bgColor="bg-blue-50" subtitle={`진행 ${wfSummary.sales.active} · 완료 ${wfSummary.sales.completed}`} />
+            <StatCard title="구매 주문" value={wfSummary.purchase.total} icon="🛒" color="text-indigo-700" bgColor="bg-indigo-50" subtitle={`진행 ${wfSummary.purchase.active} · 완료 ${wfSummary.purchase.completed}`} />
+            <StatCard title="승인 대기" value={wfSummary.approval.pending} icon="⏳" color={wfSummary.approval.pending > 0 ? 'text-amber-700' : 'text-slate-500'} bgColor={wfSummary.approval.pending > 0 ? 'bg-amber-50' : 'bg-slate-50'} />
+            <StatCard title="ERP 전송" value={wfSummary.workflow.erpSubmitted} icon="📤" color="text-emerald-700" bgColor="bg-emerald-50" subtitle="시뮬레이션" />
+            <StatCard title="창고 처리중" value={wfSummary.workflow.warehouseProcessing} icon="🏭" color="text-orange-700" bgColor="bg-orange-50" />
+            <StatCard title="처리 완료" value={wfSummary.workflow.completed} icon="✅" color="text-green-700" bgColor="bg-green-50" />
+          </div>
+        </div>
+      ) : null}
 
       {/* Exchange Rate + Recent Emails */}
       {loading ? (
