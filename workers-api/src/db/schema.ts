@@ -119,6 +119,19 @@ export const dailyReports = sqliteTable('daily_reports', {
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 
+// ─── Commodity Trend Reports (원료가격트렌드 이력) ───
+export const commodityTrendReports = sqliteTable('commodity_trend_reports', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  reportDate: text('report_date').notNull(),
+  commoditiesData: text('commodities_data').notNull(),
+  exchangeRates: text('exchange_rates'),
+  analysis: text('analysis'),
+  generatedAt: text('generated_at').notNull(),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_ctr_date').on(table.reportDate),
+]);
+
 // ─── Exchange Rate History ───
 export const exchangeRateHistory = sqliteTable('exchange_rate_history', {
   id: integer('id').primaryKey({ autoIncrement: true }),

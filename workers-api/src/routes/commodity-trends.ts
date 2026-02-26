@@ -3,9 +3,12 @@
  * 5개 원자재 가격 + 환율 + AI 전문가 분석
  */
 import { Hono } from 'hono';
+import { drizzle } from 'drizzle-orm/d1';
+import { eq, desc } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth';
 import { askAIResearchPro } from '../services/ai';
 import { fetchYahooFinance, fetchSunSirs } from './commodity-prices';
+import { commodityTrendReports } from '../db/schema';
 import type { Env } from '../types';
 
 const commodityTrends = new Hono<{ Bindings: Env }>();
@@ -143,12 +146,13 @@ KPROS와 같은 한국 화장품 원료 전문기업 관점에서의 구체적 �
     analysis = `## 시장 총평\n분석 생성에 실패했습니다: ${e.message}`;
   }
 
+  const generatedAt = new Date().toISOString();
   const responseData = {
     commodities,
     exchange_rates,
     analysis,
     date: today,
-    generated_at: new Date().toISOString(),
+    generated_at: generatedAt,
   };
 
   // KV 캐시 (24시간)
@@ -157,6 +161,18 @@ KPROS와 같은 한국 화장품 원료 전문기업 관점에서의 구체적 �
       await c.env.CACHE.put('commodity-trends:latest', JSON.stringify(responseData), { expirationTtl: 86400 });
     } catch { /* KV not available */ }
   }
+
+  // D1에 보고서 이력 저장
+  try {
+    const db = drizzle(c.env.DB);
+    await db.insert(commodityTrendReports).values({
+      reportDate: today,
+      commoditiesData: JSON.stringify(commodities),
+      exchangeRates: JSON.stringify(exchange_rates),
+      analysis,
+      generatedAt,
+    });
+  } catch { /* DB not available */ }
 
   return c.json({ status: 'success', data: responseData });
 });
@@ -171,6 +187,96 @@ commodityTrends.get('/latest', async (c) => {
 
   const cached = await c.env.CACHE.get('commodity-trends:latest', 'json') as any;
   return c.json({ status: 'success', data: cached || null });
+});
+
+/**
+ * GET /commodity-trends/history - 보고서 이력 목록
+ */
+commodityTrends.get('/history', async (c) => {
+  const db = drizzle(c.env.DB);
+  const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
+
+  const rows = await db
+    .select({
+      id: commodityTrendReports.id,
+      reportDate: commodityTrendReports.reportDate,
+      commoditiesData: commodityTrendReports.commoditiesData,
+      exchangeRates: commodityTrendReports.exchangeRates,
+      generatedAt: commodityTrendReports.generatedAt,
+    })
+    .from(commodityTrendReports)
+    .orderBy(desc(commodityTrendReports.id))
+    .limit(limit);
+
+  // 목록용 요약 데이터 생성 (전체 prices 배열 제외)
+  const reports = rows.map((r) => {
+    let summary: { label: string; price: number; change_pct: number | null; currency: string }[] = [];
+    try {
+      const commodities = JSON.parse(r.commoditiesData) as CommodityItem[];
+      summary = commodities.map((c) => ({
+        label: c.label,
+        price: c.current_price,
+        change_pct: c.change_pct,
+        currency: c.currency,
+      }));
+    } catch { /* parse error */ }
+    return {
+      id: r.id,
+      report_date: r.reportDate,
+      generated_at: r.generatedAt,
+      summary,
+    };
+  });
+
+  return c.json({ status: 'success', data: reports });
+});
+
+/**
+ * GET /commodity-trends/history/:id - 보고서 상세 조회
+ */
+commodityTrends.get('/history/:id', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ status: 'error', message: '잘못된 ID' }, 400);
+
+  const db = drizzle(c.env.DB);
+  const [row] = await db
+    .select()
+    .from(commodityTrendReports)
+    .where(eq(commodityTrendReports.id, id))
+    .limit(1);
+
+  if (!row) return c.json({ status: 'error', message: '보고서를 찾을 수 없습니다' }, 404);
+
+  const data = {
+    commodities: JSON.parse(row.commoditiesData),
+    exchange_rates: row.exchangeRates ? JSON.parse(row.exchangeRates) : {},
+    analysis: row.analysis || '',
+    date: row.reportDate,
+    generated_at: row.generatedAt,
+  };
+
+  return c.json({ status: 'success', data });
+});
+
+/**
+ * DELETE /commodity-trends/history/:id - 보고서 삭제
+ */
+commodityTrends.delete('/history/:id', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ status: 'error', message: '잘못된 ID' }, 400);
+
+  const db = drizzle(c.env.DB);
+  const [row] = await db
+    .select({ id: commodityTrendReports.id })
+    .from(commodityTrendReports)
+    .where(eq(commodityTrendReports.id, id))
+    .limit(1);
+
+  if (!row) return c.json({ status: 'error', message: '보고서를 찾을 수 없습니다' }, 404);
+
+  await db.delete(commodityTrendReports).where(eq(commodityTrendReports.id, id));
+
+  return c.json({ status: 'success', message: '보고서 삭제 완료' });
 });
 
 /**
