@@ -132,6 +132,32 @@ export const commodityTrendReports = sqliteTable('commodity_trend_reports', {
   index('idx_ctr_date').on(table.reportDate),
 ]);
 
+// ─── Order Workflows (주문처리 워크플로우) ───
+export const orderWorkflows = sqliteTable('order_workflows', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  workflowType: text('workflow_type').notNull(),
+  status: text('status').notNull().default('ERP_SUBMITTED'),
+  ioDate: text('io_date').notNull(),
+  custCd: text('cust_cd'),
+  custName: text('cust_name'),
+  itemsData: text('items_data').notNull(),
+  totalAmount: real('total_amount').default(0),
+  erpResult: text('erp_result'),
+  erpSubmittedAt: text('erp_submitted_at'),
+  step2At: text('step2_at'),
+  step3At: text('step3_at'),
+  step4At: text('step4_at'),
+  step5At: text('step5_at'),
+  note: text('note'),
+  createdBy: integer('created_by'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_ow_type').on(table.workflowType),
+  index('idx_ow_status').on(table.status),
+  index('idx_ow_date').on(table.ioDate),
+]);
+
 // ─── Exchange Rate History ───
 export const exchangeRateHistory = sqliteTable('exchange_rate_history', {
   id: integer('id').primaryKey({ autoIncrement: true }),

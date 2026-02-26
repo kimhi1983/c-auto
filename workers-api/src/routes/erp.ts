@@ -24,7 +24,7 @@ import {
 } from "../services/ecount";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { companies } from "../db/schema";
+import { companies, orderWorkflows } from "../db/schema";
 import { askAIAnalyze } from "../services/ai";
 import type { Env } from "../types";
 
@@ -493,6 +493,25 @@ erp.post("/sales", async (c) => {
 
   try {
     const result = await saveSale(c.env, { SaleList: body.items });
+
+    // 워크플로우 자동 생성
+    try {
+      const db = drizzle(c.env.DB);
+      const now = new Date().toISOString();
+      const totalAmount = body.items.reduce((sum, item) => sum + (parseFloat(item.QTY) * parseFloat(item.PRICE)), 0);
+      await db.insert(orderWorkflows).values({
+        workflowType: 'SALES',
+        status: 'ERP_SUBMITTED',
+        ioDate: body.items[0].IO_DATE,
+        custCd: body.items[0].CUST_CD,
+        custName: body.items[0].CUST_CD,
+        itemsData: JSON.stringify(body.items),
+        totalAmount,
+        erpResult: JSON.stringify(result),
+        erpSubmittedAt: now,
+      });
+    } catch { /* 워크플로우 생성 실패해도 ERP 입력은 성공 */ }
+
     return c.json({
       status: "success",
       data: result,
@@ -526,6 +545,25 @@ erp.post("/purchases", async (c) => {
 
   try {
     const result = await savePurchase(c.env, { PurchaseList: body.items });
+
+    // 워크플로우 자동 생성
+    try {
+      const db = drizzle(c.env.DB);
+      const now = new Date().toISOString();
+      const totalAmount = body.items.reduce((sum, item) => sum + (parseFloat(item.QTY) * parseFloat(item.PRICE)), 0);
+      await db.insert(orderWorkflows).values({
+        workflowType: 'PURCHASE',
+        status: 'ERP_SUBMITTED',
+        ioDate: body.items[0].IO_DATE,
+        custCd: body.items[0].CUST_CD,
+        custName: body.items[0].CUST_CD,
+        itemsData: JSON.stringify(body.items),
+        totalAmount,
+        erpResult: JSON.stringify(result),
+        erpSubmittedAt: now,
+      });
+    } catch { /* 워크플로우 생성 실패해도 ERP 입력은 성공 */ }
+
     return c.json({
       status: "success",
       data: result,

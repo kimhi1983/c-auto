@@ -18,6 +18,7 @@ import commodityPrices from './routes/commodity-prices';
 import commodityTrends from './routes/commodity-trends';
 import kprosRouter from './routes/kpros';
 import logisticsRouter from './routes/logistics';
+import workflowsRouter from './routes/workflows';
 import { getAIEngineStatus, classifyEmailAdvanced } from './services/ai';
 import { isGmailConfigured, getGmailAccessToken, listGmailMessagesAll, getGmailMessage, parseGmailMessage, downloadGmailAttachment, base64UrlToBase64 } from './services/gmail';
 import { isDropboxConfigured, getDropboxAccessToken as getDropboxToken, uploadAttachmentToDropbox } from './services/dropbox';
@@ -70,6 +71,7 @@ app.route('/api/v1/commodity-prices', commodityPrices);
 app.route('/api/v1/commodity-trends', commodityTrends);
 app.route('/api/v1/kpros', kprosRouter);
 app.route('/api/v1/logistics', logisticsRouter);
+app.route('/api/v1/workflows', workflowsRouter);
 
 // 상태 확인 라우트
 app.get('/api/status', (c) => {

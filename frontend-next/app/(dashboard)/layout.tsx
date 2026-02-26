@@ -46,6 +46,7 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { href: '/erp/sales', label: '판매입력' },
       { href: '/erp/purchases', label: '구매입력' },
+      { href: '/workflows', label: '주문처리' },
       { href: '/kpros', label: '거래처 관리' },
       { href: '/inventory', label: '재고 현황' },
       { href: '/inventory/logistics', label: '물류 대시보드' },
