@@ -158,6 +158,23 @@ export const orderWorkflows = sqliteTable('order_workflows', {
   index('idx_ow_date').on(table.ioDate),
 ]);
 
+// ─── Workflow Documents (CoA 성적서 등) ───
+export const workflowDocuments = sqliteTable('workflow_documents', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  workflowId: integer('workflow_id').notNull(),
+  documentType: text('document_type').notNull().default('COA'),
+  fileName: text('file_name').notNull(),
+  fileSize: integer('file_size'),
+  contentType: text('content_type'),
+  dropboxPath: text('dropbox_path'),
+  note: text('note'),
+  uploadedBy: integer('uploaded_by'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_wd_workflow').on(table.workflowId),
+  index('idx_wd_type').on(table.documentType),
+]);
+
 // ─── Exchange Rate History ───
 export const exchangeRateHistory = sqliteTable('exchange_rate_history', {
   id: integer('id').primaryKey({ autoIncrement: true }),
