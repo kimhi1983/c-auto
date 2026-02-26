@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
 
 interface CompanyResult {
@@ -80,6 +81,10 @@ const DEFAULT_ROWS = 10;
 // ─── Component ───
 
 export default function PurchasesInputPage() {
+  const searchParams = useSearchParams();
+  const editId = searchParams?.get('edit');
+  const [editingWorkflowId, setEditingWorkflowId] = useState<number | null>(null);
+
   // 헤더 상태 (이카운트 동일 필드)
   const [date, setDate] = useState(todayParts());
   const [custCd, setCustCd] = useState('');
@@ -233,6 +238,43 @@ export default function PurchasesInputPage() {
     fetchWarehouses();
   }, [fetchProducts, fetchRecentPurchases, fetchMemoryCustomers]);
 
+  // 편집 모드: ?edit=workflowId 로 기존 워크플로우 로드
+  useEffect(() => {
+    if (!editId) return;
+    const loadWorkflow = async () => {
+      try {
+        const res = await fetch(apiUrl(`/api/v1/workflows?limit=200`), { headers: authHeaders() });
+        const json = await res.json();
+        if (json.status !== 'success') return;
+        const wf = (json.data || []).find((w: any) => w.id === Number(editId));
+        if (!wf) return;
+        setEditingWorkflowId(wf.id);
+        if (wf.custCd) setCustCd(wf.custCd);
+        if (wf.customerName || wf.custName) setCustDes(wf.customerName || wf.custName);
+        if (wf.ioDate) {
+          const d = wf.ioDate.replace(/-/g, '');
+          if (d.length === 8) setDate({ year: d.slice(0, 4), month: d.slice(4, 6), day: d.slice(6, 8) });
+        }
+        const items = wf.items || JSON.parse(wf.itemsData || '[]');
+        if (items.length > 0) {
+          const loadedRows: PurchaseRow[] = items.map((item: any) => ({
+            id: genId(),
+            PROD_CD: item.PROD_CD || '',
+            PROD_DES: item.PROD_DES || '',
+            SPEC: item.UNIT || '',
+            QTY: String(item.QTY || ''),
+            PRICE: String(item.PRICE || item.UNIT_PRICE || ''),
+            REMARKS: item.REMARKS || '',
+          }));
+          while (loadedRows.length < DEFAULT_ROWS) loadedRows.push(emptyRow());
+          setRows(loadedRows);
+        }
+        if (items[0]?.WH_CD) { setWhCd(items[0].WH_CD); setWhDes(items[0].WH_CD); }
+      } catch { /* silent */ }
+    };
+    loadWorkflow();
+  }, [editId]);
+
   // ─── 거래처 선택 ───
 
   const selectCustomer = (company: CompanyResult) => {
@@ -377,29 +419,36 @@ export default function PurchasesInputPage() {
     }));
 
     try {
-      const res = await fetch(apiUrl('/api/v1/workflows'), {
-        method: 'POST',
+      const payload = {
+        workflowType: 'PURCHASE',
+        customerName: custDes || custCd,
+        custCd,
+        ioDate: `${date.year}-${date.month}-${date.day}`,
+        items,
+        totalAmount: totals.supply + totals.vat,
+        action,
+      };
+
+      const isEdit = !!editingWorkflowId;
+      const url = isEdit ? apiUrl(`/api/v1/workflows/${editingWorkflowId}`) : apiUrl('/api/v1/workflows');
+      const res = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
         headers: authJsonHeaders(),
-        body: JSON.stringify({
-          workflowType: 'PURCHASE',
-          customerName: custDes || custCd,
-          custCd,
-          ioDate: `${date.year}-${date.month}-${date.day}`,
-          items,
-          totalAmount: totals.supply + totals.vat,
-          action,
-        }),
+        body: JSON.stringify(payload),
       });
       const json = await res.json();
       if (json.status === 'success') {
-        setSuccessMsg(json.message || (action === 'submit' ? '승인 요청 완료' : '임시저장 완료'));
-        // 패턴 학습
+        setSuccessMsg(json.message || (action === 'submit' ? '승인 요청 완료' : isEdit ? '수정 완료' : '임시저장 완료'));
         fetch(apiUrl('/api/v1/memory/learn'), {
           method: 'POST', headers: authJsonHeaders(),
           body: JSON.stringify({ custCd, custDes, whCd, whDes, items, workflowType: 'PURCHASE' }),
         }).catch(() => {});
         fetchMemoryCustomers();
-        if (action === 'submit') handleReset();
+        if (action === 'submit') {
+          handleReset();
+          setEditingWorkflowId(null);
+          if (isEdit) window.history.replaceState({}, '', '/erp/purchases');
+        }
       } else {
         setErrorMsg(json.message || '저장 실패');
       }
@@ -462,6 +511,17 @@ export default function PurchasesInputPage() {
 
       {/* 메인 카드 */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-card overflow-hidden">
+
+        {/* 편집 모드 배너 */}
+        {editingWorkflowId && (
+          <div className="px-5 py-3 bg-blue-50 border-b border-blue-200 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-blue-800">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+              <span className="font-semibold">워크플로우 #{editingWorkflowId} 수정 중</span>
+            </div>
+            <a href="/erp/purchases" className="text-xs text-blue-600 hover:text-blue-800 font-medium">새 문서 작성</a>
+          </div>
+        )}
 
         {/* 제목 바 */}
         <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">

@@ -7,13 +7,17 @@ interface WorkflowItem {
   id: number;
   workflowType: string;
   status: string;
+  orderNumber: string | null;
   ioDate: string;
   custCd: string | null;
   custName: string | null;
+  customerName: string | null;
   itemsData: string;
-  items: { PROD_CD?: string; QTY?: string; PRICE?: string; WH_CD?: string; REMARKS?: string }[];
+  items: { PROD_CD?: string; PROD_DES?: string; QTY?: string; PRICE?: string; UNIT_PRICE?: string; SUPPLY_AMT?: string; WH_CD?: string; REMARKS?: string }[];
   totalAmount: number;
   erpSubmittedAt: string | null;
+  approvedAt: string | null;
+  rejectionReason: string | null;
   step2At: string | null;
   step3At: string | null;
   step4At: string | null;
@@ -53,14 +57,30 @@ function formatIoDate(d: string) {
   return d;
 }
 
+// 승인 전 상태 라벨
+const PRE_LABELS: Record<string, string> = {
+  DRAFT: '임시저장',
+  PENDING_APPROVAL: '승인대기',
+  APPROVED: '승인완료',
+  REJECTED: '반려',
+};
+
+function getStatusLabel(status: string, type: string) {
+  if (PRE_LABELS[status]) return PRE_LABELS[status];
+  return getLabels(type)[status] || status;
+}
+
 // 상태 뱃지 색상
 function statusColor(status: string, type: string) {
+  if (status === 'DRAFT') return 'bg-slate-100 text-slate-600';
+  if (status === 'PENDING_APPROVAL') return 'bg-amber-100 text-amber-700';
+  if (status === 'REJECTED') return 'bg-red-100 text-red-700';
   const steps = getSteps(type);
   const idx = steps.indexOf(status);
   if (idx === steps.length - 1) return 'bg-green-100 text-green-700';
   if (idx >= steps.length - 2) return 'bg-blue-100 text-blue-700';
   if (idx >= 1) return 'bg-amber-100 text-amber-700';
-  return 'bg-slate-100 text-slate-600';
+  return 'bg-emerald-100 text-emerald-700';
 }
 
 export default function WorkflowsPage() {
@@ -198,45 +218,122 @@ export default function WorkflowsPage() {
               <h1 className="text-xl font-bold text-slate-900">
                 {selected.workflowType === 'SALES' ? '판매' : '구매'} 주문 #{selected.id}
               </h1>
-              <p className="text-sm text-slate-500">{formatIoDate(selected.ioDate)} · {selected.custName || selected.custCd}</p>
+              <p className="text-sm text-slate-500">{formatIoDate(selected.ioDate)} · {selected.customerName || selected.custName || selected.custCd}</p>
             </div>
           </div>
           <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusColor(selected.status, selected.workflowType)}`}>
-            {labels[selected.status]}
+            {getStatusLabel(selected.status, selected.workflowType)}
           </span>
         </div>
 
         {message && <div className="px-4 py-3 bg-brand-50 border border-brand-200 text-brand-700 text-sm rounded-2xl">{message}</div>}
 
-        {/* 진행 상태 */}
-        <div className="bg-white rounded-2xl border border-slate-200/80 p-6">
-          <h3 className="text-sm font-bold text-slate-900 mb-5">진행 상태</h3>
-          <StepProgress workflow={selected} />
-
-          <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100">
-            {currentIdx > 0 && (
-              <button
-                onClick={() => advanceStatus(selected.id, 'prev')}
-                disabled={actionLoading}
-                className="px-4 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition disabled:opacity-50"
+        {/* 반려 사유 */}
+        {selected.status === 'REJECTED' && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-5 animate-fadeIn">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-bold text-red-800">승인 반려</h4>
+                <p className="text-sm text-red-700 mt-1">{selected.rejectionReason || '반려 사유가 기록되지 않았습니다.'}</p>
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <a
+                href={`/erp/${selected.workflowType === 'SALES' ? 'sales' : 'purchases'}?edit=${selected.id}`}
+                className="px-4 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition inline-flex items-center gap-1.5"
               >
-                이전 단계로
-              </button>
-            )}
-            {!isComplete && (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                수정 후 재제출
+              </a>
               <button
-                onClick={() => advanceStatus(selected.id, 'next')}
-                disabled={actionLoading}
-                className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition disabled:opacity-50"
+                onClick={(e) => deleteWorkflow(e, selected.id)}
+                className="px-4 py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-xl hover:bg-red-50 transition"
               >
-                {actionLoading ? '처리 중...' : `${labels[steps[currentIdx + 1]]}(으)로 진행`}
+                삭제
               </button>
-            )}
-            {isComplete && (
-              <span className="text-sm text-green-600 font-semibold">처리 완료</span>
-            )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* DRAFT 상태 안내 */}
+        {selected.status === 'DRAFT' && (
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 animate-fadeIn">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-bold text-slate-700">임시 저장 상태</h4>
+                <p className="text-sm text-slate-500 mt-1">아직 승인 요청하지 않은 문서입니다.</p>
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <a
+                href={`/erp/${selected.workflowType === 'SALES' ? 'sales' : 'purchases'}?edit=${selected.id}`}
+                className="px-4 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition inline-flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                수정하기
+              </a>
+              <button
+                onClick={(e) => deleteWorkflow(e, selected.id)}
+                className="px-4 py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-xl hover:bg-red-50 transition"
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PENDING_APPROVAL 안내 */}
+        {selected.status === 'PENDING_APPROVAL' && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-amber-800">승인 대기 중</h4>
+                <p className="text-sm text-amber-700 mt-0.5">관리자의 승인을 기다리고 있습니다.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 진행 상태 (ERP 전송 이후 단계에서만 표시) */}
+        {currentIdx >= 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-6">
+            <h3 className="text-sm font-bold text-slate-900 mb-5">진행 상태</h3>
+            <StepProgress workflow={selected} />
+
+            <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100">
+              {currentIdx > 0 && (
+                <button
+                  onClick={() => advanceStatus(selected.id, 'prev')}
+                  disabled={actionLoading}
+                  className="px-4 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  이전 단계로
+                </button>
+              )}
+              {!isComplete && (
+                <button
+                  onClick={() => advanceStatus(selected.id, 'next')}
+                  disabled={actionLoading}
+                  className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition disabled:opacity-50"
+                >
+                  {actionLoading ? '처리 중...' : `${labels[steps[currentIdx + 1]]}(으)로 진행`}
+                </button>
+              )}
+              {isComplete && (
+                <span className="text-sm text-green-600 font-semibold">처리 완료</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 품목 정보 */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-6">
@@ -352,18 +449,19 @@ export default function WorkflowsPage() {
           ))}
         </div>
 
-        {filter !== 'ALL' && (
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700"
-          >
-            <option value="">모든 상태</option>
-            {(filter === 'SALES' ? SALES_STEPS : PURCHASE_STEPS).map(s => (
-              <option key={s} value={s}>{(filter === 'SALES' ? SALES_LABELS : PURCHASE_LABELS)[s]}</option>
-            ))}
-          </select>
-        )}
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700"
+        >
+          <option value="">모든 상태</option>
+          <option value="DRAFT">임시저장</option>
+          <option value="PENDING_APPROVAL">승인대기</option>
+          <option value="REJECTED">반려</option>
+          {(filter !== 'ALL' ? (filter === 'SALES' ? SALES_STEPS : PURCHASE_STEPS) : SALES_STEPS).map(s => (
+            <option key={s} value={s}>{(filter === 'SALES' ? SALES_LABELS : filter === 'PURCHASE' ? PURCHASE_LABELS : SALES_LABELS)[s]}</option>
+          ))}
+        </select>
       </div>
 
       {/* 목록 */}
@@ -400,7 +498,7 @@ export default function WorkflowsPage() {
                       {w.workflowType === 'SALES' ? '판매' : '구매'}
                     </span>
                     <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${statusColor(w.status, w.workflowType)}`}>
-                      {labels[w.status]}
+                      {getStatusLabel(w.status, w.workflowType)}
                     </span>
                     <span className="text-sm font-semibold text-slate-900">#{w.id}</span>
                   </div>
@@ -419,7 +517,7 @@ export default function WorkflowsPage() {
 
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-sm text-slate-700">
-                    <span className="font-medium">{w.custName || w.custCd || '-'}</span>
+                    <span className="font-medium">{w.customerName || w.custName || w.custCd || '-'}</span>
                     <span className="text-slate-400 mx-2">·</span>
                     <span>{itemCount}개 품목</span>
                     <span className="text-slate-400 mx-2">·</span>
