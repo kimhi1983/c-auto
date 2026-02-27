@@ -345,9 +345,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               if (user?.role === 'admin') return true;
               if (item.href === '/dashboard') return true;
               if (!allowedMenus) return true;  // null = 전체 접근
-              // children이 있는 항목 (창고): 하위 항목 중 하나라도 허용되면 표시
+              // children이 있는 항목: 부모 href 또는 하위 항목 중 하나라도 허용되면 표시
               if (item.children) {
-                return item.children.some(child => allowedMenus!.includes(child.href));
+                return allowedMenus!.includes(item.href) || item.children.some(child => allowedMenus!.includes(child.href));
               }
               return allowedMenus.includes(item.href);
             });
@@ -413,6 +413,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                               {item.children!.filter(child => {
                                 if (user?.role === 'admin') return true;
                                 if (!allowedMenus) return true;
+                                // 부모 href가 허용 목록에 있으면 모든 하위 메뉴 표시
+                                if (allowedMenus.includes(item.href)) return true;
                                 return allowedMenus.includes(child.href);
                               }).map((child) => {
                                 const cActive = isChildActive(child.href);
