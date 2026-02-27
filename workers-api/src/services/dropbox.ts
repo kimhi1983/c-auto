@@ -410,6 +410,30 @@ export async function downloadDropboxFile(
   return { data: new Uint8Array(arrayBuf), name, contentType };
 }
 
+// ─── Delete File ───
+
+export async function deleteDropboxFile(
+  accessToken: string,
+  path: string
+): Promise<void> {
+  const res = await fetch(`${DROPBOX_API_URL}/files/delete_v2`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    // 이미 삭제된 파일이면 무시
+    if (!err.includes("path_lookup") && !err.includes("not_found")) {
+      throw new Error(`Dropbox delete failed: ${err}`);
+    }
+  }
+}
+
 // ─── Multi-keyword Search (KPROS) ───
 
 export async function searchDropboxMultiKeyword(

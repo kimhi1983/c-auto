@@ -435,6 +435,33 @@ export const kprosWarehouseOut = sqliteTable('kpros_warehouse_out', {
   index('idx_kp_wh_out_date').on(table.dueDate),
 ]);
 
+// ─── CoA Documents (성적서 파일 저장소) ───
+export const coaDocuments = sqliteTable('coa_documents', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fileName: text('file_name').notNull(),
+  originalName: text('original_name').notNull(),
+  fileSize: integer('file_size').notNull().default(0),
+  contentType: text('content_type'),
+  dropboxPath: text('dropbox_path').notNull(),
+  note: text('note'),
+  tags: text('tags'),
+  uploadedBy: integer('uploaded_by'),
+  uploadedByName: text('uploaded_by_name'),
+  productName: text('product_name'),
+  lotNo: text('lot_no'),
+  manuDate: text('manu_date'),
+  validDate: text('valid_date'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_coa_docs_name').on(table.fileName),
+  index('idx_coa_docs_original').on(table.originalName),
+  index('idx_coa_docs_uploader').on(table.uploadedByName),
+  index('idx_coa_docs_created').on(table.createdAt),
+  index('idx_coa_docs_product').on(table.productName),
+  index('idx_coa_docs_lot').on(table.lotNo),
+]);
+
 // ─── 성적서 CoA (Certificates of Analysis) ───
 export const kprosCoa = sqliteTable('kpros_coa', {
   id: integer('id').primaryKey({ autoIncrement: true }),

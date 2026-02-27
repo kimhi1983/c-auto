@@ -64,6 +64,7 @@ export const UserRoleSchema = z.enum([
   'approver',
   'staff',
   'viewer',
+  'warehouse_manager',
 ]);
 
 // 로그인 스키마 (ID + 비밀번호)

@@ -20,7 +20,9 @@ import type { Env } from "../types";
 
 const GEMINI_MODEL = "gemini-2.0-flash";
 const GEMINI_PRO_MODEL = "gemini-2.5-pro";
+const CLAUDE_HAIKU_MODEL = "claude-3-haiku-20240307";
 const WORKERS_AI_MODEL = "@cf/meta/llama-3.1-70b-instruct";
+const WORKERS_AI_VISION_MODEL = "@cf/llava-hf/llava-1.5-7b-hf";
 
 // ─── Provider: Gemini Flash ───
 
@@ -235,6 +237,74 @@ async function callGeminiProWithSearch(
   return parts.map((p: any) => p.text || "").join("");
 }
 
+// ─── Provider: Claude (Anthropic Messages API) ───
+
+/**
+ * Claude 멀티모달 호출 — PDF/이미지 분석 (Gemini 리전 차단 시 폴백)
+ * Anthropic Messages API + base64 미디어 지원
+ */
+async function callClaudeMultimodal(
+  apiKey: string,
+  prompt: string,
+  fileBase64: string,
+  mimeType: string,
+  systemPrompt?: string,
+  maxTokens = 2048
+): Promise<string> {
+  // Anthropic API media_type: "application/pdf" | "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+  const mediaType = mimeType as "application/pdf" | "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+  // PDF는 document 타입, 이미지는 image 타입
+  const isPdf = mimeType.includes("pdf");
+  const contentBlock = isPdf
+    ? { type: "document" as const, source: { type: "base64" as const, media_type: mediaType, data: fileBase64 } }
+    : { type: "image" as const, source: { type: "base64" as const, media_type: mediaType, data: fileBase64 } };
+
+  const body: Record<string, unknown> = {
+    model: CLAUDE_HAIKU_MODEL,
+    max_tokens: maxTokens,
+    messages: [
+      {
+        role: "user",
+        content: [
+          contentBlock,
+          { type: "text", text: prompt },
+        ],
+      },
+    ],
+  };
+
+  if (systemPrompt) {
+    body.system = systemPrompt;
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+  };
+  // PDF 분석에는 beta 헤더 필요
+  if (isPdf) {
+    headers["anthropic-beta"] = "pdfs-2024-09-25";
+  }
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Claude API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as any;
+  // Anthropic Messages API 응답: content[].text
+  const textBlocks = data.content?.filter((b: any) => b.type === "text") || [];
+  return textBlocks.map((b: any) => b.text).join("") || "";
+}
+
 // ─── Provider: Workers AI (Fallback) ───
 
 async function callWorkersAI(
@@ -254,6 +324,35 @@ async function callWorkersAI(
   });
 
   return (response as any).response || "";
+}
+
+/**
+ * Workers AI Vision — 이미지 분석 (Cloudflare 내장, 외부 API 불필요)
+ * LLaVA 1.5 7B 모델 사용 (라이선스 동의 불필요)
+ * 주의: 이미지만 지원 (PDF는 지원하지 않음)
+ */
+async function callWorkersAIVision(
+  ai: Ai,
+  prompt: string,
+  imageBase64: string,
+  maxTokens = 2048
+): Promise<string> {
+  // base64 → Uint8Array 변환
+  const binaryStr = atob(imageBase64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  // LLaVA는 prompt + image 형식 사용
+  const response = await ai.run(WORKERS_AI_VISION_MODEL as any, {
+    prompt,
+    image: [...bytes],
+    max_tokens: maxTokens,
+    temperature: 0.2,
+  });
+
+  return (response as any).description || (response as any).response || "";
 }
 
 // ─── Smart Router (역할별 최적 모델 자동 배분) ───
@@ -720,6 +819,339 @@ export async function analyzeAttachment(
     undefined,
     512
   );
+}
+
+// ─── 성적서(CoA) AI 자동 분석 ───
+
+export interface CoaAnalysisResult {
+  productName: string | null;
+  lotNo: string | null;
+  manuDate: string | null;
+  validDate: string | null;
+  manufacturer: string | null;
+  confidence: number;
+  rawResponse?: string; // 디버깅용
+}
+
+const COA_ANALYSIS_SYSTEM = `You are an expert document analyzer specializing in Certificate of Analysis (CoA) documents for chemical and cosmetic raw materials.
+
+Your task: Extract metadata from CoA/test report documents and return ONLY valid JSON.
+
+CRITICAL RULES:
+- Output ONLY a JSON object. No explanation, no markdown, no code fences.
+- Extract the FULL product name including brand/trade name (e.g., "PUROLAN® IHD", not just "IHD").
+- Dates must be in YYYY-MM-DD format.
+- If a field is not found, set it to null.`;
+
+function buildCoaAnalysisPrompt(fileName: string): string {
+  return `Analyze this Certificate of Analysis (CoA) document and extract the following metadata.
+
+File name for reference: ${fileName}
+
+Return ONLY this JSON (no markdown, no code blocks, no extra text):
+{
+  "productName": "Full product/material name including trade name",
+  "lotNo": "Lot or Batch number",
+  "manuDate": "Manufacturing date in YYYY-MM-DD",
+  "validDate": "Expiry/Best Before/Retest date in YYYY-MM-DD",
+  "manufacturer": "Manufacturer or supplier company name",
+  "confidence": 85
+}
+
+EXTRACTION GUIDE — check these field labels in the document:
+
+productName (pick the FULL commercial name, including ® or ™ symbols):
+  - "Product Name", "Product", "Material Description", "Material Name"
+  - "Trade Name", "Commercial Name", "Product Description"
+  - "Item", "Article", "Description", "품명", "제품명", "원료명"
+  - IMPORTANT: Use the complete trade/brand name, e.g., "PUROLAN® IHD" not just "IHD"
+
+lotNo:
+  - "Lot No", "Lot Number", "Lot #", "Batch", "Batch No", "Batch Number"
+  - "Charge", "Lot/Batch", "LOT", "B/N", "로트번호", "배치번호"
+
+manuDate (convert to YYYY-MM-DD):
+  - "Manufacturing Date", "MFG Date", "Date of Manufacture", "Production Date"
+  - "MFG", "Mfg. Date", "Date of Production", "제조일", "제조일자"
+
+validDate (convert to YYYY-MM-DD):
+  - "Expiry Date", "Expiration Date", "Best Before", "Best Before Date"
+  - "Retest Date", "Valid Until", "Shelf Life", "Use By", "EXP"
+  - "유효기한", "사용기한", "유효일자"
+
+manufacturer:
+  - "Manufacturer", "Produced by", "Made by", "Supplier", "Company"
+  - Look at letterhead, logo, or footer for company name
+  - "제조사", "공급사", "제조원"
+
+confidence: 0-100
+  - 90+: All key fields (productName + lotNo + at least one date) clearly found
+  - 70-89: Most fields found but some uncertain
+  - 50-69: Only partial extraction possible
+  - Below 50: Very uncertain, mostly guessing`;
+}
+
+/**
+ * 성적서(CoA) 문서 AI 분석 — 제품명, LOT, 제조일, 유효기한, 제조사 자동 추출
+ * 시도 순서: Gemini 멀티모달 → Claude 멀티모달 → Workers AI Vision → 파일명 regex 폴백
+ */
+export async function analyzeCoaDocument(
+  env: Env,
+  fileName: string,
+  contentType: string,
+  base64Data: string,
+): Promise<CoaAnalysisResult> {
+  const ct = (contentType || "").toLowerCase();
+  const debugInfo: string[] = [];
+  const typeMatch = GEMINI_MULTIMODAL_TYPES.some(t => ct.includes(t));
+
+  const mimeType = ct.includes("pdf") ? "application/pdf" :
+    ct.includes("jpeg") || ct.includes("jpg") ? "image/jpeg" :
+    ct.includes("png") ? "image/png" :
+    ct.includes("gif") ? "image/gif" : "image/webp";
+  const b64Size = Math.round(base64Data.length / 1024);
+
+  // 1) Gemini 멀티모달로 PDF/이미지 분석
+  const hasGemini = !!env.GEMINI_API_KEY;
+  debugInfo.push(`gemini=${hasGemini}, ct=${ct}, typeMatch=${typeMatch}`);
+
+  if (hasGemini && typeMatch) {
+    try {
+      debugInfo.push(`gemini: ${mimeType}, ${b64Size}KB`);
+      console.log(`[CoA AI] Gemini analyzing: ${fileName} (${mimeType}, ${b64Size}KB)`);
+
+      const raw = await callGeminiMultimodal(
+        env.GEMINI_API_KEY!,
+        buildCoaAnalysisPrompt(fileName),
+        base64Data,
+        mimeType,
+        COA_ANALYSIS_SYSTEM,
+        2048
+      );
+
+      debugInfo.push(`gemini raw=${raw.slice(0, 150)}`);
+      console.log(`[CoA AI] Gemini response for ${fileName}:`, raw.slice(0, 500));
+
+      const parsed = parseCoaJson(raw);
+      if (parsed) {
+        debugInfo.push(`gemini parsed=OK`);
+        return {
+          productName: parsed.productName || null,
+          lotNo: parsed.lotNo || null,
+          manuDate: normalizeDate(parsed.manuDate),
+          validDate: normalizeDate(parsed.validDate),
+          manufacturer: parsed.manufacturer || null,
+          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 70,
+          rawResponse: debugInfo.join(" | "),
+        };
+      }
+
+      debugInfo.push(`gemini parsed=FAIL`);
+      console.warn(`[CoA AI] Gemini JSON parse failed for ${fileName}`);
+    } catch (e: any) {
+      const errMsg = e?.message || String(e);
+      debugInfo.push(`gemini error=${errMsg.slice(0, 150)}`);
+      console.error(`[CoA AI] Gemini failed for ${fileName}:`, errMsg);
+    }
+  }
+
+  // 2) Claude 멀티모달 폴백 (Gemini 리전 차단 우회)
+  const hasClaude = !!env.ANTHROPIC_API_KEY;
+  debugInfo.push(`claude=${hasClaude}`);
+
+  if (hasClaude && typeMatch) {
+    try {
+      debugInfo.push(`claude: ${mimeType}, ${b64Size}KB`);
+      console.log(`[CoA AI] Claude fallback analyzing: ${fileName} (${mimeType}, ${b64Size}KB)`);
+
+      const raw = await callClaudeMultimodal(
+        env.ANTHROPIC_API_KEY!,
+        buildCoaAnalysisPrompt(fileName),
+        base64Data,
+        mimeType,
+        COA_ANALYSIS_SYSTEM,
+        2048
+      );
+
+      debugInfo.push(`claude raw=${raw.slice(0, 150)}`);
+      console.log(`[CoA AI] Claude response for ${fileName}:`, raw.slice(0, 500));
+
+      const parsed = parseCoaJson(raw);
+      if (parsed) {
+        debugInfo.push(`claude parsed=OK`);
+        return {
+          productName: parsed.productName || null,
+          lotNo: parsed.lotNo || null,
+          manuDate: normalizeDate(parsed.manuDate),
+          validDate: normalizeDate(parsed.validDate),
+          manufacturer: parsed.manufacturer || null,
+          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 70,
+          rawResponse: debugInfo.join(" | "),
+        };
+      }
+
+      debugInfo.push(`claude parsed=FAIL`);
+      console.warn(`[CoA AI] Claude JSON parse failed for ${fileName}`);
+    } catch (e: any) {
+      const errMsg = e?.message || String(e);
+      debugInfo.push(`claude error=${errMsg.slice(0, 150)}`);
+      console.error(`[CoA AI] Claude failed for ${fileName}:`, errMsg);
+    }
+  }
+
+  // 3) Workers AI Vision 폴백 (이미지만 — PDF 미지원)
+  const isImage = !ct.includes("pdf") && typeMatch;
+  debugInfo.push(`workersAI=true, isImage=${isImage}`);
+
+  if (isImage) {
+    try {
+      debugInfo.push(`workersAI: ${mimeType}, ${b64Size}KB`);
+      console.log(`[CoA AI] Workers AI Vision analyzing: ${fileName} (${mimeType}, ${b64Size}KB)`);
+
+      const raw = await callWorkersAIVision(
+        env.AI,
+        `${COA_ANALYSIS_SYSTEM}\n\n${buildCoaAnalysisPrompt(fileName)}`,
+        base64Data,
+        2048
+      );
+
+      debugInfo.push(`workersAI raw=${raw.slice(0, 150)}`);
+      console.log(`[CoA AI] Workers AI response for ${fileName}:`, raw.slice(0, 500));
+
+      const parsed = parseCoaJson(raw);
+      if (parsed) {
+        debugInfo.push(`workersAI parsed=OK`);
+        return {
+          productName: parsed.productName || null,
+          lotNo: parsed.lotNo || null,
+          manuDate: normalizeDate(parsed.manuDate),
+          validDate: normalizeDate(parsed.validDate),
+          manufacturer: parsed.manufacturer || null,
+          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 50,
+          rawResponse: debugInfo.join(" | "),
+        };
+      }
+
+      debugInfo.push(`workersAI parsed=FAIL`);
+      console.warn(`[CoA AI] Workers AI JSON parse failed for ${fileName}`);
+    } catch (e: any) {
+      const errMsg = e?.message || String(e);
+      debugInfo.push(`workersAI error=${errMsg.slice(0, 150)}`);
+      console.error(`[CoA AI] Workers AI Vision failed for ${fileName}:`, errMsg);
+    }
+  }
+
+  // 4) 최종 폴백: 파일명 기반 regex 추출
+  debugInfo.push(`fallback=filename`);
+  console.log(`[CoA AI] Using filename fallback for: ${fileName}`);
+  const result = extractFromFileName(fileName);
+  result.rawResponse = debugInfo.join(" | ");
+  return result;
+}
+
+/** JSON 응답 파싱 — 여러 형식 처리 */
+function parseCoaJson(raw: string): any | null {
+  // 빈 응답 체크
+  if (!raw || raw.trim().length === 0) return null;
+
+  // 방법 1: 직접 파싱
+  try {
+    return JSON.parse(raw.trim());
+  } catch {}
+
+  // 방법 2: 마크다운 코드블록 제거 후 파싱
+  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim());
+    } catch {}
+  }
+
+  // 방법 3: 첫 번째 { } 블록 추출
+  const braceMatch = raw.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try {
+      return JSON.parse(braceMatch[0]);
+    } catch {}
+  }
+
+  return null;
+}
+
+/** 다양한 날짜 형식을 YYYY-MM-DD로 정규화 */
+function normalizeDate(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+  const d = dateStr.trim();
+
+  // 이미 YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+
+  // YYYY.MM.DD
+  const dotMatch = d.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
+  if (dotMatch) return `${dotMatch[1]}-${dotMatch[2].padStart(2, "0")}-${dotMatch[3].padStart(2, "0")}`;
+
+  // YYYY/MM/DD
+  const slashMatch = d.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (slashMatch) return `${slashMatch[1]}-${slashMatch[2].padStart(2, "0")}-${slashMatch[3].padStart(2, "0")}`;
+
+  // DD.MM.YYYY or DD/MM/YYYY
+  const euMatch = d.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (euMatch) return `${euMatch[3]}-${euMatch[2].padStart(2, "0")}-${euMatch[1].padStart(2, "0")}`;
+
+  // MM/DD/YYYY
+  const usMatch = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (usMatch) return `${usMatch[3]}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+
+  // YYYYMMDD
+  const compactMatch = d.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactMatch) return `${compactMatch[1]}-${compactMatch[2]}-${compactMatch[3]}`;
+
+  return d; // 변환 불가 시 원본 반환
+}
+
+/** 파일명에서 제품명/LOT 패턴 추출 (폴백용) */
+function extractFromFileName(fileName: string): CoaAnalysisResult {
+  const nameWithoutExt = fileName.replace(/\.[^.]+$/, "");
+
+  // COA, 성적서, certificate 등 키워드 제거
+  const cleaned = nameWithoutExt.replace(/(?:COA|coa|성적서|certificate|Certificate|CERTIFICATE)[_\-\s]*/gi, "").trim();
+
+  // LOT/Batch 패턴 추출 (접두어 있는 경우)
+  const lotPrefixed = cleaned.match(/(?:LOT|Lot|lot|batch|BATCH|Batch|B\.?N\.?)[_\-\s.:]*([A-Z0-9][\w\-]+)/i);
+
+  // 세그먼트 분리 (언더스코어, 하이픈, 공백)
+  const segments = cleaned.split(/[_\-]+/).map(s => s.trim()).filter(s => s.length > 0);
+  let lotNo: string | null = lotPrefixed?.[1] || null;
+  let productSegments: string[] = segments;
+
+  if (!lotNo && segments.length >= 2) {
+    const last = segments[segments.length - 1];
+    // 영문+숫자 혼합 패턴 (LOT번호로 추정):
+    // "IH2412041E", "BGSXFAG135", "LOT2025001", "ABC123DEF" 등
+    // 조건: 영문과 숫자가 모두 포함되고, 공백이 없는 단일 토큰
+    const hasAlpha = /[A-Z]/i.test(last);
+    const hasDigit = /\d/.test(last);
+    const isAlphaNum = /^[A-Z0-9]+$/i.test(last);
+    if (hasAlpha && hasDigit && isAlphaNum && last.length >= 5) {
+      lotNo = last;
+      productSegments = segments.slice(0, -1);
+    }
+  }
+
+  // 제품명: COA/certificate 제거 후 남은 의미 있는 세그먼트 결합
+  const productParts = productSegments.filter(
+    s => !/^(?:COA|coa|성적서|certificate|cert|test|report|analysis)$/i.test(s)
+  );
+  const productName = productParts.join(" ").trim() || nameWithoutExt;
+
+  return {
+    productName: productName || null,
+    lotNo,
+    manuDate: null,
+    validDate: null,
+    manufacturer: null,
+    confidence: lotNo ? 15 : 5,
+  };
 }
 
 /**

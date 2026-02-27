@@ -85,6 +85,38 @@ export default function WarehousePortalPage() {
   const [processing, setProcessing] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<WorkflowTask[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [allowedWarehouses, setAllowedWarehouses] = useState<WarehouseCode[] | null>(null);
+
+  // 사용자 권한에 따라 접근 가능한 창고 필터링
+  useEffect(() => {
+    const fetchUserPermissions = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/v1/auth/me'), { headers: authHeaders() });
+        if (!res.ok) return;
+        const user = await res.json();
+        if (user.role === 'admin' || !user.menu_permissions) {
+          setAllowedWarehouses(null); // 전체 접근
+          return;
+        }
+        const perms: string[] = JSON.parse(user.menu_permissions);
+        // 허용된 창고 코드 추출 (/warehouse-portal?wh=mk → mk)
+        const whCodes = perms
+          .filter((p: string) => p.startsWith('/warehouse-portal?wh='))
+          .map((p: string) => p.split('=')[1] as WarehouseCode);
+        setAllowedWarehouses(whCodes.length > 0 ? whCodes : []);
+        // 현재 선택된 창고가 허용 목록에 없으면 첫 번째 허용 창고로 전환
+        if (whCodes.length > 0 && !whCodes.includes(activeWh)) {
+          setActiveWh(whCodes[0]);
+        }
+      } catch { /* 권한 조회 실패 시 전체 표시 */ }
+    };
+    fetchUserPermissions();
+  }, []);
+
+  // 권한 필터가 적용된 창고 목록
+  const visibleWarehouses = allowedWarehouses === null
+    ? WAREHOUSES
+    : WAREHOUSES.filter(w => allowedWarehouses.includes(w.code));
 
   const currentWh = WAREHOUSES.find(w => w.code === activeWh) || WAREHOUSES[0];
 
@@ -416,8 +448,8 @@ export default function WarehousePortalPage() {
   return (
     <div className="space-y-6">
       {/* Warehouse Selector */}
-      <div className="flex items-center gap-3">
-        {WAREHOUSES.map(wh => (
+      <div className="flex items-center gap-3 flex-wrap">
+        {visibleWarehouses.map(wh => (
           <button
             key={wh.code}
             onClick={() => { setActiveWh(wh.code); setSelectedTask(null); }}

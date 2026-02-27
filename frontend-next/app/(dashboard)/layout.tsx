@@ -223,6 +223,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         if (!response.ok) throw new Error('인증 실패');
         const data = await response.json();
         setUser(data);
+
+        // 권한 제한 사용자: 현재 페이지가 허용 목록에 없으면 첫 번째 허용 메뉴로 리다이렉트
+        if (data.role !== 'admin' && data.menu_permissions) {
+          try {
+            const perms: string[] = JSON.parse(data.menu_permissions);
+            if (perms.length > 0) {
+              // 현재 경로가 허용 목록에 있는지 확인
+              const currentAllowed = perms.some((p: string) => {
+                const pPath = p.split('?')[0];
+                return pathname === p || pathname === pPath || pathname?.startsWith(pPath + '/');
+              });
+              if (!currentAllowed) {
+                router.replace(perms[0]);
+              }
+            }
+          } catch { /* 파싱 실패 시 무시 */ }
+        }
       } catch {
         localStorage.removeItem('access_token');
         router.push('/login');
@@ -231,7 +248,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
     };
     fetchUser();
-  }, [router]);
+  }, [router, pathname]);
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
@@ -243,6 +260,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     approver: '승인자',
     staff: '직원',
     viewer: '뷰어',
+    warehouse_manager: '창고 관리자',
   };
 
   // 현재 페이지 라벨 (헤더 표시용)
@@ -343,7 +361,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             const visibleItems = section.items.filter(item => {
               if (item.adminOnly && user?.role !== 'admin') return false;
               if (user?.role === 'admin') return true;
-              if (item.href === '/dashboard') return true;
               if (!allowedMenus) return true;  // null = 전체 접근
               // children이 있는 항목: 부모 href 또는 하위 항목 중 하나라도 허용되면 표시
               if (item.children) {

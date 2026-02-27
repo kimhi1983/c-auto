@@ -27,6 +27,10 @@ binding = "AI"
 # binding = "FILES"
 # bucket_name = "c-auto-files"
 
+# Smart Placement — Gemini API가 지원하는 리전(US)에서 Workers 실행
+[placement]
+mode = "smart"
+
 # 환경 변수 (개발용 기본값)
 [vars]
 JWT_SECRET = "dev-secret-key-change-in-prod"

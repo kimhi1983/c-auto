@@ -16,6 +16,7 @@ interface User {
 
 // 메뉴 권한 설정용 목록
 const MENU_ITEMS: { key: string; label: string; section: string }[] = [
+  { key: '/dashboard', label: '대시보드', section: '기본' },
   { key: '/erp/sales', label: '판매입력', section: '업무' },
   { key: '/erp/purchases', label: '구매입력', section: '업무' },
   { key: '/approvals', label: '승인관리', section: '업무' },
@@ -34,7 +35,7 @@ const MENU_ITEMS: { key: string; label: string; section: string }[] = [
   { key: '/archives', label: '리포트', section: '정보' },
   { key: '/emails', label: '이메일', section: '시스템' },
 ];
-const MENU_SECTIONS = ['업무', '창고 포털', '관리', '정보', '시스템'];
+const MENU_SECTIONS = ['기본', '업무', '창고 포털', '관리', '정보', '시스템'];
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -99,7 +100,8 @@ export default function UsersPage() {
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.detail || '사용자 생성 실패');
+        const errMsg = data.detail || (typeof data.error === 'string' ? data.error : null) || data.message || `사용자 생성 실패 (${response.status})`;
+        throw new Error(errMsg);
       }
 
       setShowForm(false);
