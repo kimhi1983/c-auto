@@ -21,6 +21,7 @@ import logisticsRouter from './routes/logistics';
 import workflowsRouter from './routes/workflows';
 import warehouseOpsRouter from './routes/warehouse-ops';
 import memoryRouter from './routes/memory';
+import productsRouter from './routes/products';
 import { getAIEngineStatus, classifyEmailAdvanced } from './services/ai';
 import { isGmailConfigured, getGmailAccessToken, listGmailMessagesAll, getGmailMessage, parseGmailMessage, downloadGmailAttachment, base64UrlToBase64 } from './services/gmail';
 import { isDropboxConfigured, getDropboxAccessToken as getDropboxToken, uploadAttachmentToDropbox } from './services/dropbox';
@@ -76,6 +77,7 @@ app.route('/api/v1/logistics', logisticsRouter);
 app.route('/api/v1/workflows', workflowsRouter);
 app.route('/api/v1/warehouse-ops', warehouseOpsRouter);
 app.route('/api/v1/memory', memoryRouter);
+app.route('/api/v1/products', productsRouter);
 
 // 상태 확인 라우트
 app.get('/api/status', (c) => {

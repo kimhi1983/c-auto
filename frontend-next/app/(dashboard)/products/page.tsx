@@ -4,153 +4,144 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api'
 import { setCache, getCache } from '@/lib/cache'
 
-// ── 타입 정의 ──
-interface Company {
+// -- 타입 정의 --
+interface Product {
   id: number
-  companyCd: string | null
-  companyNm: string
-  ceoNm: string | null
-  bizNo: string | null
-  tel: string | null
-  fax: string | null
-  email: string | null
-  addr: string | null
-  memo: string | null
-  managerNm: string | null
-  managerTel: string | null
-  managerEmail: string | null
-  companyType: string | null
+  prodCd: string | null
+  prodDes: string
+  prodDes2: string | null
+  unit: string | null
+  sellPrice: number
+  costPrice: number
+  classCd: string | null
+  classDes: string | null
+  brand: string | null
+  manufacturer: string | null
+  source: string
+  kprosProductIdx: number | null
   isActive: boolean
-  kprosIdx: number | null
+  memo: string | null
   createdAt: string
   updatedAt: string
 }
 
-interface CompanyForm {
-  company_cd: string
-  company_nm: string
-  ceo_nm: string
-  biz_no: string
-  tel: string
-  fax: string
-  email: string
-  addr: string
+interface ProductForm {
+  prod_cd: string
+  prod_des: string
+  prod_des2: string
+  unit: string
+  sell_price: number
+  cost_price: number
+  class_cd: string
+  class_des: string
+  brand: string
+  manufacturer: string
   memo: string
-  manager_nm: string
-  manager_tel: string
-  manager_email: string
-  company_type: string
-  sync_ecount: boolean
 }
 
-const EMPTY_FORM: CompanyForm = {
-  company_cd: '', company_nm: '', ceo_nm: '', biz_no: '',
-  tel: '', fax: '', email: '', addr: '', memo: '',
-  manager_nm: '', manager_tel: '', manager_email: '', company_type: '',
-  sync_ecount: true,
+const EMPTY_FORM: ProductForm = {
+  prod_cd: '', prod_des: '', prod_des2: '', unit: '',
+  sell_price: 0, cost_price: 0, class_cd: '', class_des: '',
+  brand: '', manufacturer: '', memo: '',
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  customer: '매출처', supplier: '매입처', both: '매입/매출',
-}
-
-const TYPE_COLORS: Record<string, string> = {
-  customer: 'bg-blue-50 text-blue-700 border-blue-200',
-  supplier: 'bg-orange-50 text-orange-700 border-orange-200',
-  both: 'bg-purple-50 text-purple-700 border-purple-200',
-}
-
-// 소스 판별 함수
-function getSource(c: Company): 'kpros' | 'ecount' | 'manual' {
-  if (c.kprosIdx) return 'kpros'
-  if (c.companyCd && !c.kprosIdx) return 'ecount'
-  return 'manual'
-}
-
+// 소스 라벨 / 컬러
 const SOURCE_LABELS: Record<string, string> = {
-  kpros: 'KPROS', ecount: '이카운트', manual: '직접등록',
+  ecount: '이카운트', kpros: 'KPROS', manual: '직접등록',
 }
 const SOURCE_COLORS: Record<string, string> = {
-  kpros: 'bg-cyan-50 text-cyan-700',
   ecount: 'bg-emerald-50 text-emerald-700',
+  kpros: 'bg-cyan-50 text-cyan-700',
   manual: 'bg-slate-100 text-slate-600',
 }
 
-// ── 탭 정의 ──
-type TabKey = 'all' | 'active' | 'customer' | 'supplier' | 'both'
+// -- 탭 정의 --
+type TabKey = 'all' | 'active' | 'ecount' | 'kpros' | 'manual'
 const TABS: { key: TabKey; label: string; icon: string }[] = [
-  { key: 'all', label: '전체', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
+  { key: 'all', label: '전체', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4' },
   { key: 'active', label: '활성', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
-  { key: 'customer', label: '매출처', icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
-  { key: 'supplier', label: '매입처', icon: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z' },
-  { key: 'both', label: '매입/매출', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
+  { key: 'ecount', label: '이카운트', icon: 'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z' },
+  { key: 'kpros', label: 'KPROS', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
+  { key: 'manual', label: '직접등록', icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z' },
 ]
 
-export default function KprosPage() {
-  // ── 데이터 상태 ──
-  const [companies, setCompanies] = useState<Company[]>([])
-  const [allCompanies, setAllCompanies] = useState<Company[]>([])
+export default function ProductsPage() {
+  // -- 데이터 상태 --
+  const [products, setProducts] = useState<Product[]>([])
+  const [allProducts, setAllProducts] = useState<Product[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // ── 필터/검색 ──
+  // -- 필터/검색 --
   const [activeTab, setActiveTab] = useState<TabKey>('all')
   const [searchTerm, setSearchTerm] = useState('')
-  const [typeFilter, setTypeFilter] = useState('')
-  const [sourceFilter, setSourceFilter] = useState('')
+  const [classFilter, setClassFilter] = useState('')
 
-  // ── 모달/패널 ──
+  // -- 모달/패널 --
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [form, setForm] = useState<CompanyForm>(EMPTY_FORM)
+  const [form, setForm] = useState<ProductForm>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
-  const [selectedCompany, setSelectedCompany] = useState<Company | null>(null)
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
 
-  // ── 액션 ──
+  // -- 액션 --
   const [syncing, setSyncing] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [ecountMsg, setEcountMsg] = useState<{ type: 'success' | 'warning' | 'info'; text: string } | null>(null)
+  const [syncMsg, setSyncMsg] = useState<{ type: 'success' | 'warning' | 'info'; text: string } | null>(null)
+  const [showSyncMenu, setShowSyncMenu] = useState(false)
+
+  // -- 캐시 상태 --
   const [usingCache, setUsingCache] = useState(false)
   const [cacheAge, setCacheAge] = useState('')
 
-  // ── 탭별 카운트 (전체 데이터 기반) ──
+  // -- 탭별 카운트 (전체 데이터 기반) --
   const tabCounts = useMemo(() => {
-    const all = allCompanies
+    const all = allProducts
     return {
       all: all.length,
-      active: all.filter(c => c.isActive).length,
-      customer: all.filter(c => c.companyType === 'customer').length,
-      supplier: all.filter(c => c.companyType === 'supplier').length,
-      both: all.filter(c => c.companyType === 'both').length,
+      active: all.filter(p => p.isActive).length,
+      ecount: all.filter(p => p.source === 'ecount').length,
+      kpros: all.filter(p => p.source === 'kpros').length,
+      manual: all.filter(p => p.source === 'manual').length,
     }
-  }, [allCompanies])
+  }, [allProducts])
 
-  // ── 전체 데이터 로드 (탭 카운트용) ──
-  const fetchAllCompanies = useCallback(async () => {
+  // -- 분류 목록 추출 (필터 드롭다운용) --
+  const classList = useMemo(() => {
+    const set = new Set<string>()
+    allProducts.forEach(p => { if (p.classDes) set.add(p.classDes) })
+    return Array.from(set).sort()
+  }, [allProducts])
+
+  // -- 전체 데이터 로드 (탭 카운트용) --
+  const fetchAllProducts = useCallback(async () => {
     try {
-      const res = await fetch(apiUrl('/api/v1/kpros/companies?limit=9999&active=false'), { headers: authHeaders() })
+      const res = await fetch(apiUrl('/api/v1/products?limit=9999&active=false'), { headers: authHeaders() })
       const json = await res.json()
       if (json.status === 'success') {
-        setAllCompanies(json.data || [])
-        setCache('cache:kpros:companies', json.data || [])
+        const data = json.data || []
+        setAllProducts(data)
         setUsingCache(false)
+        setCacheAge('')
+        // 캐시 저장
+        setCache('cache:products', data)
       }
     } catch {
-      // API 실패 시 캐시 fallback
-      const cached = getCache<Company[]>('cache:kpros:companies')
+      // API 실패 시 캐시에서 복구
+      const cached = getCache<Product[]>('cache:products')
       if (cached) {
-        setAllCompanies(cached.data)
+        setAllProducts(cached.data)
         setUsingCache(true)
         setCacheAge(cached.age)
       }
     }
   }, [])
 
-  // ── 페이지 데이터 로드 ──
-  const fetchCompanies = useCallback(async () => {
+  // -- 페이지 데이터 로드 --
+  const fetchProducts = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
@@ -165,23 +156,20 @@ export default function KprosPage() {
       } else {
         params.set('active', 'false')
       }
-      if (activeTab === 'customer' || activeTab === 'supplier' || activeTab === 'both') {
-        params.set('type', activeTab)
-      } else if (typeFilter) {
-        params.set('type', typeFilter)
+      if (activeTab === 'ecount' || activeTab === 'kpros' || activeTab === 'manual') {
+        params.set('source', activeTab)
+      }
+      if (classFilter) {
+        params.set('class', classFilter)
       }
 
-      const res = await fetch(apiUrl(`/api/v1/kpros/companies?${params}`), { headers: authHeaders() })
+      const res = await fetch(apiUrl(`/api/v1/products?${params}`), { headers: authHeaders() })
       const json = await res.json()
       if (json.status === 'success') {
-        let data = json.data as Company[] || []
-        // 클라이언트 소스 필터
-        if (sourceFilter) {
-          data = data.filter(c => getSource(c) === sourceFilter)
-        }
-        setCompanies(data)
-        setTotal(sourceFilter ? data.length : (json.total || 0))
-        setTotalPages(sourceFilter ? 1 : (json.totalPages || 1))
+        const data = json.data as Product[] || []
+        setProducts(data)
+        setTotal(json.total || 0)
+        setTotalPages(json.totalPages || 1)
       } else {
         setError(json.message || '조회 실패')
       }
@@ -190,20 +178,28 @@ export default function KprosPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, searchTerm, activeTab, typeFilter, sourceFilter])
+  }, [page, searchTerm, activeTab, classFilter])
 
-  useEffect(() => { fetchCompanies() }, [fetchCompanies])
-  useEffect(() => { fetchAllCompanies() }, [fetchAllCompanies])
+  useEffect(() => { fetchProducts() }, [fetchProducts])
+  useEffect(() => { fetchAllProducts() }, [fetchAllProducts])
 
-  // ── 핸들러 ──
+  // -- 동기화 드롭다운 외부 클릭 닫기 --
+  useEffect(() => {
+    if (!showSyncMenu) return
+    const handleClick = () => setShowSyncMenu(false)
+    document.addEventListener('click', handleClick)
+    return () => document.removeEventListener('click', handleClick)
+  }, [showSyncMenu])
+
+  // -- 핸들러 --
   const handleSave = async () => {
-    if (!form.company_nm.trim()) { setError('거래처명은 필수입니다'); return }
+    if (!form.prod_des.trim()) { setError('품목명은 필수입니다'); return }
     setSaving(true)
     setError('')
     try {
       const url = editingId
-        ? apiUrl(`/api/v1/kpros/companies/${editingId}`)
-        : apiUrl('/api/v1/kpros/companies')
+        ? apiUrl(`/api/v1/products/${editingId}`)
+        : apiUrl('/api/v1/products')
       const method = editingId ? 'PATCH' : 'POST'
       const res = await fetch(url, { method, headers: authJsonHeaders(), body: JSON.stringify(form) })
       const json = await res.json()
@@ -211,16 +207,8 @@ export default function KprosPage() {
         setShowModal(false)
         setEditingId(null)
         setForm(EMPTY_FORM)
-        fetchCompanies()
-        fetchAllCompanies()
-        // 이카운트 연동 결과
-        if (!editingId && json.ecount) {
-          const ec = json.ecount
-          if (ec.success) setEcountMsg({ type: 'success', text: ec.message })
-          else if (!ec.skipped) setEcountMsg({ type: 'warning', text: ec.message })
-          else if (ec.message) setEcountMsg({ type: 'info', text: ec.message })
-          setTimeout(() => setEcountMsg(null), 5000)
-        }
+        fetchProducts()
+        fetchAllProducts()
       } else {
         setError(json.message || '저장 실패')
       }
@@ -232,26 +220,29 @@ export default function KprosPage() {
   }
 
   const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`"${name}" 거래처를 비활성화하시겠습니까?`)) return
+    if (!confirm(`"${name}" 품목을 비활성화하시겠습니까?`)) return
     try {
-      const res = await fetch(apiUrl(`/api/v1/kpros/companies/${id}`), { method: 'DELETE', headers: authHeaders() })
+      const res = await fetch(apiUrl(`/api/v1/products/${id}`), { method: 'DELETE', headers: authHeaders() })
       const json = await res.json()
-      if (json.status === 'success') { fetchCompanies(); fetchAllCompanies(); setSelectedCompany(null) }
+      if (json.status === 'success') { fetchProducts(); fetchAllProducts(); setSelectedProduct(null) }
       else setError(json.message)
     } catch (e: any) { setError(e.message) }
   }
 
-  const handleSyncKpros = async () => {
+  const handleSync = async (type: 'ecount' | 'kpros') => {
     setSyncing(true)
     setError('')
+    setShowSyncMenu(false)
     try {
-      const res = await fetch(apiUrl('/api/v1/kpros/companies/sync-kpros'), { method: 'POST', headers: authHeaders() })
+      const res = await fetch(apiUrl(`/api/v1/products/sync-${type}`), { method: 'POST', headers: authHeaders() })
       const json = await res.json()
       if (json.status === 'success') {
-        fetchCompanies()
-        fetchAllCompanies()
-        setEcountMsg({ type: 'success', text: json.message || 'KPROS 동기화 완료' })
-        setTimeout(() => setEcountMsg(null), 5000)
+        fetchProducts()
+        fetchAllProducts()  // 캐시도 자동 갱신됨
+        setUsingCache(false)
+        setCacheAge('')
+        setSyncMsg({ type: 'success', text: json.message || `${type === 'ecount' ? '이카운트' : 'KPROS'} 동기화 완료` })
+        setTimeout(() => setSyncMsg(null), 5000)
       } else { setError(json.message) }
     } catch (e: any) { setError(e.message) }
     finally { setSyncing(false) }
@@ -260,57 +251,55 @@ export default function KprosPage() {
   const handleExportCSV = async () => {
     setExporting(true)
     try {
-      const res = await fetch(apiUrl('/api/v1/kpros/companies?limit=9999&active=false'), { headers: authHeaders() })
+      const res = await fetch(apiUrl('/api/v1/products?limit=9999&active=false'), { headers: authHeaders() })
       const json = await res.json()
       if (json.status !== 'success' || !json.data?.length) { setError('내보낼 데이터가 없습니다'); return }
-      const allData = json.data as Company[]
+      const allData = json.data as Product[]
       const BOM = '\uFEFF'
-      const headers = ['거래처코드','거래처명','대표자','사업자번호','전화','팩스','이메일','주소','담당자명','담당자전화','담당자이메일','거래유형','소스','메모']
-      const rows = allData.map(c => [
-        c.companyCd||'', c.companyNm, c.ceoNm||'', c.bizNo||'',
-        c.tel||'', c.fax||'', c.email||'', c.addr||'',
-        c.managerNm||'', c.managerTel||'', c.managerEmail||'',
-        TYPE_LABELS[c.companyType||'']||c.companyType||'',
-        SOURCE_LABELS[getSource(c)],
-        (c.memo||'').replace(/"/g, '""'),
+      const headers = ['품목코드','품목명','품목명2','단위','판매가','원가','분류코드','분류명','브랜드','제조사','소스','상태','메모']
+      const rows = allData.map(p => [
+        p.prodCd || '', p.prodDes, p.prodDes2 || '', p.unit || '',
+        String(p.sellPrice || 0), String(p.costPrice || 0),
+        p.classCd || '', p.classDes || '', p.brand || '', p.manufacturer || '',
+        SOURCE_LABELS[p.source] || p.source,
+        p.isActive ? '활성' : '비활성',
+        (p.memo || '').replace(/"/g, '""'),
       ])
       const csv = BOM + [headers.join(','), ...rows.map(r => r.map(v => `"${v}"`).join(','))].join('\n')
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `거래처목록_${new Date().toISOString().split('T')[0]}.csv`
+      link.download = `품목목록_${new Date().toISOString().split('T')[0]}.csv`
       link.click()
       URL.revokeObjectURL(url)
     } catch (e: any) { setError(e.message || 'CSV 내보내기 실패') }
     finally { setExporting(false) }
   }
 
-  const openEdit = (c: Company) => {
-    setEditingId(c.id)
+  const openEdit = (p: Product) => {
+    setEditingId(p.id)
     setForm({
-      company_cd: c.companyCd || '', company_nm: c.companyNm, ceo_nm: c.ceoNm || '',
-      biz_no: c.bizNo || '', tel: c.tel || '', fax: c.fax || '',
-      email: c.email || '', addr: c.addr || '', memo: c.memo || '',
-      manager_nm: c.managerNm || '', manager_tel: c.managerTel || '',
-      manager_email: c.managerEmail || '', company_type: c.companyType || '',
-      sync_ecount: true,
+      prod_cd: p.prodCd || '', prod_des: p.prodDes, prod_des2: p.prodDes2 || '',
+      unit: p.unit || '', sell_price: p.sellPrice || 0, cost_price: p.costPrice || 0,
+      class_cd: p.classCd || '', class_des: p.classDes || '',
+      brand: p.brand || '', manufacturer: p.manufacturer || '', memo: p.memo || '',
     })
     setShowModal(true)
   }
 
   const openCreate = () => { setEditingId(null); setForm(EMPTY_FORM); setShowModal(true) }
-  const updateField = (field: keyof CompanyForm, value: string | boolean) => setForm(prev => ({ ...prev, [field]: value }))
+  const updateField = (field: keyof ProductForm, value: string | number) => setForm(prev => ({ ...prev, [field]: value }))
   const handleSearch = (e: React.FormEvent) => { e.preventDefault(); setPage(1) }
 
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab)
     setPage(1)
-    setTypeFilter('')
-    setSelectedCompany(null)
+    setClassFilter('')
+    setSelectedProduct(null)
   }
 
-  // ── 인라인 컴포넌트: 입력 필드 ──
+  // -- 인라인 컴포넌트: 입력 필드 --
   const InputField = ({ label, required, ...props }: { label: string; required?: boolean } & React.InputHTMLAttributes<HTMLInputElement>) => (
     <div>
       <label className="block text-xs font-medium text-slate-600 mb-1.5">
@@ -325,14 +314,14 @@ export default function KprosPage() {
 
   return (
     <div className="flex h-[calc(100vh-4rem)]">
-      {/* ── 메인 영역 ── */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${selectedCompany ? 'mr-0' : ''}`}>
+      {/* -- 메인 영역 -- */}
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${selectedProduct ? 'mr-0' : ''}`}>
         {/* 헤더 */}
         <div className="flex-shrink-0 px-6 pt-6 pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">거래처 관리</h1>
-              <p className="text-sm text-slate-500 mt-1">KPROS / 이카운트 ERP 거래처 통합 관리</p>
+              <h1 className="text-2xl font-bold text-slate-900">품목 관리</h1>
+              <p className="text-sm text-slate-500 mt-1">이카운트 ERP / KPROS 품목 통합 관리</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -345,16 +334,40 @@ export default function KprosPage() {
                 </svg>
                 {exporting ? '내보내기...' : 'CSV'}
               </button>
-              <button
-                onClick={handleSyncKpros}
-                disabled={syncing}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              >
-                <svg className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                동기화
-              </button>
+              {/* 동기화 드롭다운 */}
+              <div className="relative">
+                <button
+                  onClick={e => { e.stopPropagation(); setShowSyncMenu(!showSyncMenu) }}
+                  disabled={syncing}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <svg className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  동기화
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showSyncMenu && (
+                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl border border-slate-200 shadow-lg z-20 py-1">
+                    <button
+                      onClick={() => handleSync('ecount')}
+                      className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      이카운트 동기화
+                    </button>
+                    <button
+                      onClick={() => handleSync('kpros')}
+                      className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-cyan-500" />
+                      KPROS 동기화
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 onClick={openCreate}
                 className="px-4 py-2 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition-colors flex items-center gap-1.5"
@@ -362,40 +375,45 @@ export default function KprosPage() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
-                거래처 추가
+                품목 추가
               </button>
             </div>
           </div>
 
-          {/* 캐시 데이터 배너 */}
+          {/* 캐시 데이터 사용 중 배너 */}
           {usingCache && (
-            <div className="mt-4 p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm text-amber-700">
+            <div className="mt-4 p-3 rounded-xl text-sm bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-between">
+              <div className="flex items-center gap-2">
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
                 </svg>
                 <span>오프라인 캐시 데이터를 표시 중 ({cacheAge} 저장)</span>
               </div>
-              <button onClick={() => { fetchCompanies(); fetchAllCompanies() }} className="text-xs font-medium text-amber-800 hover:text-amber-900 underline">새로고침</button>
+              <button
+                onClick={() => { fetchAllProducts(); fetchProducts() }}
+                className="px-3 py-1 rounded-lg bg-amber-100 text-amber-800 text-xs font-medium hover:bg-amber-200 transition-colors"
+              >
+                새로고침
+              </button>
             </div>
           )}
 
-          {/* 이카운트 연동 결과 배너 */}
-          {ecountMsg && (
+          {/* 동기화 결과 배너 */}
+          {syncMsg && (
             <div className={`mt-4 p-3 rounded-xl text-sm flex items-center justify-between ${
-              ecountMsg.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700'
-              : ecountMsg.type === 'warning' ? 'bg-orange-50 border border-orange-200 text-orange-700'
+              syncMsg.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700'
+              : syncMsg.type === 'warning' ? 'bg-orange-50 border border-orange-200 text-orange-700'
               : 'bg-blue-50 border border-blue-200 text-blue-700'
             }`}>
               <div className="flex items-center gap-2">
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {ecountMsg.type === 'success'
+                  {syncMsg.type === 'success'
                     ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />}
                 </svg>
-                <span>{ecountMsg.text}</span>
+                <span>{syncMsg.text}</span>
               </div>
-              <button onClick={() => setEcountMsg(null)} className="opacity-60 hover:opacity-100 ml-2">
+              <button onClick={() => setSyncMsg(null)} className="opacity-60 hover:opacity-100 ml-2">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -441,35 +459,25 @@ export default function KprosPage() {
               </svg>
               <input
                 type="text"
-                placeholder="거래처명, 대표자, 사업자번호, 담당자, 이메일 검색..."
+                placeholder="품목명, 품목코드, 분류명 검색..."
                 value={searchTerm}
                 onChange={e => { setSearchTerm(e.target.value); setPage(1) }}
                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400"
               />
             </form>
             <div className="flex items-center gap-2">
-              {activeTab === 'all' && (
+              {classList.length > 0 && (
                 <select
-                  value={typeFilter}
-                  onChange={e => { setTypeFilter(e.target.value); setPage(1) }}
+                  value={classFilter}
+                  onChange={e => { setClassFilter(e.target.value); setPage(1) }}
                   className="px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                 >
-                  <option value="">유형 전체</option>
-                  <option value="customer">매출처</option>
-                  <option value="supplier">매입처</option>
-                  <option value="both">매입/매출</option>
+                  <option value="">분류 전체</option>
+                  {classList.map(cls => (
+                    <option key={cls} value={cls}>{cls}</option>
+                  ))}
                 </select>
               )}
-              <select
-                value={sourceFilter}
-                onChange={e => { setSourceFilter(e.target.value); setPage(1) }}
-                className="px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-              >
-                <option value="">소스 전체</option>
-                <option value="kpros">KPROS</option>
-                <option value="ecount">이카운트</option>
-                <option value="manual">직접등록</option>
-              </select>
             </div>
           </div>
 
@@ -490,7 +498,7 @@ export default function KprosPage() {
             <div className="flex-1 flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-8 h-8 border-[3px] border-brand-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-slate-500">거래처 조회 중...</span>
+                <span className="text-sm text-slate-500">품목 조회 중...</span>
               </div>
             </div>
           )}
@@ -501,65 +509,70 @@ export default function KprosPage() {
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-white z-10">
                   <tr className="border-b border-slate-100">
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">거래처명</th>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden sm:table-cell">대표자</th>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">사업자번호</th>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">전화</th>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">유형</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">품목코드</th>
+                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">품목명</th>
+                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden sm:table-cell">단위</th>
+                    <th className="text-right px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">판매가</th>
+                    <th className="text-right px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">원가</th>
+                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">분류</th>
                     <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">소스</th>
                     <th className="text-center px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell w-16">상태</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {companies.length === 0 ? (
+                  {products.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-16">
+                      <td colSpan={8} className="text-center py-16">
                         <div className="flex flex-col items-center gap-3">
                           <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
                             <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                             </svg>
                           </div>
-                          <div className="text-sm text-slate-500">조건에 맞는 거래처가 없습니다</div>
+                          <div className="text-sm text-slate-500">조건에 맞는 품목이 없습니다</div>
                           <button onClick={openCreate} className="text-sm text-brand-600 hover:text-brand-700 font-medium">
-                            + 거래처 등록하기
+                            + 품목 등록하기
                           </button>
                         </div>
                       </td>
                     </tr>
                   ) : (
-                    companies.map(c => {
-                      const source = getSource(c)
-                      const isSelected = selectedCompany?.id === c.id
+                    products.map(p => {
+                      const isSelected = selectedProduct?.id === p.id
                       return (
                         <tr
-                          key={c.id}
-                          onClick={() => setSelectedCompany(isSelected ? null : c)}
+                          key={p.id}
+                          onClick={() => setSelectedProduct(isSelected ? null : p)}
                           className={`border-b border-slate-50 cursor-pointer transition-colors ${
                             isSelected ? 'bg-brand-50/50' : 'hover:bg-slate-50/50'
                           }`}
                         >
                           <td className="px-4 py-3">
-                            <div className="font-medium text-slate-800">{c.companyNm}</div>
-                            {c.companyCd && <div className="text-xs text-slate-400 mt-0.5">{c.companyCd}</div>}
+                            <span className="text-xs text-slate-500 font-mono">{p.prodCd || <span className="text-slate-300">-</span>}</span>
                           </td>
-                          <td className="px-3 py-3 text-slate-600 hidden sm:table-cell">{c.ceoNm || <span className="text-slate-300">-</span>}</td>
-                          <td className="px-3 py-3 text-slate-500 text-xs hidden md:table-cell">{c.bizNo || <span className="text-slate-300">-</span>}</td>
-                          <td className="px-3 py-3 text-slate-500 text-xs hidden md:table-cell">{c.tel || c.managerTel || <span className="text-slate-300">-</span>}</td>
+                          <td className="px-3 py-3">
+                            <div className="font-medium text-slate-800">{p.prodDes}</div>
+                            {p.prodDes2 && <div className="text-xs text-slate-400 mt-0.5">{p.prodDes2}</div>}
+                          </td>
+                          <td className="px-3 py-3 text-slate-600 hidden sm:table-cell">{p.unit || <span className="text-slate-300">-</span>}</td>
+                          <td className="px-3 py-3 text-right text-slate-700 hidden md:table-cell">
+                            {p.sellPrice ? p.sellPrice.toLocaleString() : <span className="text-slate-300">-</span>}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-500 hidden md:table-cell">
+                            {p.costPrice ? p.costPrice.toLocaleString() : <span className="text-slate-300">-</span>}
+                          </td>
                           <td className="px-3 py-3 hidden lg:table-cell">
-                            {c.companyType ? (
-                              <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium border ${TYPE_COLORS[c.companyType] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                                {TYPE_LABELS[c.companyType] || c.companyType}
-                              </span>
+                            {p.classDes ? (
+                              <span className="text-xs text-slate-600">{p.classDes}</span>
                             ) : <span className="text-slate-300 text-xs">-</span>}
                           </td>
                           <td className="px-3 py-3 hidden lg:table-cell">
-                            <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${SOURCE_COLORS[source]}`}>
-                              {SOURCE_LABELS[source]}
+                            <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${SOURCE_COLORS[p.source] || 'bg-slate-100 text-slate-600'}`}>
+                              {SOURCE_LABELS[p.source] || p.source}
                             </span>
                           </td>
                           <td className="px-3 py-3 text-center hidden lg:table-cell">
-                            {c.isActive ? (
+                            {p.isActive ? (
                               <span className="inline-block w-2 h-2 rounded-full bg-green-500" title="활성" />
                             ) : (
                               <span className="inline-block w-2 h-2 rounded-full bg-slate-300" title="비활성" />
@@ -599,26 +612,26 @@ export default function KprosPage() {
         </div>
       </div>
 
-      {/* ── 상세 사이드 패널 ── */}
-      {selectedCompany && (
+      {/* -- 상세 사이드 패널 -- */}
+      {selectedProduct && (
         <div className="w-[380px] flex-shrink-0 border-l border-slate-200 bg-white overflow-y-auto">
           <DetailPanel
-            company={selectedCompany}
-            onClose={() => setSelectedCompany(null)}
+            product={selectedProduct}
+            onClose={() => setSelectedProduct(null)}
             onEdit={openEdit}
             onDelete={handleDelete}
           />
         </div>
       )}
 
-      {/* ── 등록/수정 모달 ── */}
+      {/* -- 등록/수정 모달 -- */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowModal(false)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             {/* 모달 헤더 */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-900">
-                {editingId ? '거래처 수정' : '거래처 등록'}
+                {editingId ? '품목 수정' : '품목 등록'}
               </h2>
               <button onClick={() => setShowModal(false)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -631,52 +644,38 @@ export default function KprosPage() {
               {/* 기본 정보 */}
               <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">기본 정보</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InputField label="거래처명" required type="text" value={form.company_nm}
-                  onChange={e => updateField('company_nm', (e.target as HTMLInputElement).value)} placeholder="거래처명 입력" />
-                <InputField label="거래처코드" type="text" value={form.company_cd}
-                  onChange={e => updateField('company_cd', (e.target as HTMLInputElement).value)} placeholder="코드 (선택)" />
+                <InputField label="품목명" required type="text" value={form.prod_des}
+                  onChange={e => updateField('prod_des', (e.target as HTMLInputElement).value)} placeholder="품목명 입력" />
+                <InputField label="품목코드" type="text" value={form.prod_cd}
+                  onChange={e => updateField('prod_cd', (e.target as HTMLInputElement).value)} placeholder="코드 (선택)" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InputField label="대표자" type="text" value={form.ceo_nm}
-                  onChange={e => updateField('ceo_nm', (e.target as HTMLInputElement).value)} placeholder="대표자명" />
-                <InputField label="사업자번호" type="text" value={form.biz_no}
-                  onChange={e => updateField('biz_no', (e.target as HTMLInputElement).value)} placeholder="000-00-00000" />
+              <InputField label="품목명2 (영문/별칭)" type="text" value={form.prod_des2}
+                onChange={e => updateField('prod_des2', (e.target as HTMLInputElement).value)} placeholder="영문명 또는 별칭" />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <InputField label="단위" type="text" value={form.unit}
+                  onChange={e => updateField('unit', (e.target as HTMLInputElement).value)} placeholder="EA, KG, M 등" />
+                <InputField label="판매가" type="number" value={form.sell_price}
+                  onChange={e => updateField('sell_price', Number((e.target as HTMLInputElement).value))} placeholder="0" />
+                <InputField label="원가" type="number" value={form.cost_price}
+                  onChange={e => updateField('cost_price', Number((e.target as HTMLInputElement).value))} placeholder="0" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InputField label="전화" type="text" value={form.tel}
-                  onChange={e => updateField('tel', (e.target as HTMLInputElement).value)} placeholder="02-0000-0000" />
-                <InputField label="팩스" type="text" value={form.fax}
-                  onChange={e => updateField('fax', (e.target as HTMLInputElement).value)} placeholder="02-0000-0000" />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InputField label="이메일" type="email" value={form.email}
-                  onChange={e => updateField('email', (e.target as HTMLInputElement).value)} placeholder="example@company.com" />
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">거래 유형</label>
-                  <select value={form.company_type} onChange={e => updateField('company_type', e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400">
-                    <option value="">미지정</option>
-                    <option value="customer">매출처</option>
-                    <option value="supplier">매입처</option>
-                    <option value="both">매입/매출</option>
-                  </select>
-                </div>
-              </div>
-              <InputField label="주소" type="text" value={form.addr}
-                onChange={e => updateField('addr', (e.target as HTMLInputElement).value)} placeholder="주소 입력" />
 
-              {/* 담당자 정보 */}
+              {/* 분류 정보 */}
               <div className="border-t border-slate-100 pt-4">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">담당자 정보</div>
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">분류 정보</div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InputField label="담당자명" type="text" value={form.manager_nm}
-                  onChange={e => updateField('manager_nm', (e.target as HTMLInputElement).value)} placeholder="담당자 이름" />
-                <InputField label="담당자 전화" type="text" value={form.manager_tel}
-                  onChange={e => updateField('manager_tel', (e.target as HTMLInputElement).value)} placeholder="010-0000-0000" />
+                <InputField label="분류코드" type="text" value={form.class_cd}
+                  onChange={e => updateField('class_cd', (e.target as HTMLInputElement).value)} placeholder="분류코드" />
+                <InputField label="분류명" type="text" value={form.class_des}
+                  onChange={e => updateField('class_des', (e.target as HTMLInputElement).value)} placeholder="분류명" />
               </div>
-              <InputField label="담당자 이메일" type="email" value={form.manager_email}
-                onChange={e => updateField('manager_email', (e.target as HTMLInputElement).value)} placeholder="manager@company.com" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <InputField label="브랜드" type="text" value={form.brand}
+                  onChange={e => updateField('brand', (e.target as HTMLInputElement).value)} placeholder="브랜드명" />
+                <InputField label="제조사" type="text" value={form.manufacturer}
+                  onChange={e => updateField('manufacturer', (e.target as HTMLInputElement).value)} placeholder="제조사명" />
+              </div>
 
               {/* 메모 */}
               <div>
@@ -685,23 +684,6 @@ export default function KprosPage() {
                   placeholder="비고 또는 메모..." rows={3}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400 resize-none" />
               </div>
-
-              {/* 이카운트 ERP 연동 (신규 등록 시만) */}
-              {!editingId && (
-                <div className="border-t border-slate-100 pt-4">
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={form.sync_ecount}
-                        onChange={e => updateField('sync_ecount', e.target.checked)}
-                        className="w-4 h-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500/20" />
-                      <span className="text-sm font-medium text-slate-700">이카운트 ERP에도 등록</span>
-                    </label>
-                    {form.sync_ecount && !form.biz_no && (
-                      <span className="text-xs text-orange-500">(사업자번호 입력 시 연동)</span>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* 모달 하단 버튼 */}
@@ -723,15 +705,13 @@ export default function KprosPage() {
   )
 }
 
-// ── 상세 사이드 패널 컴포넌트 ──
-function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
-  company: Company
+// -- 상세 사이드 패널 컴포넌트 --
+function DetailPanel({ product: p, onClose, onEdit, onDelete }: {
+  product: Product
   onClose: () => void
-  onEdit: (c: Company) => void
+  onEdit: (p: Product) => void
   onDelete: (id: number, name: string) => void
 }) {
-  const source = getSource(c)
-
   const InfoRow = ({ label, value }: { label: string; value: string | null | undefined }) => (
     <div className="flex items-start py-2">
       <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">{label}</span>
@@ -745,17 +725,12 @@ function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
       <div className="flex-shrink-0 px-5 py-4 border-b border-slate-100">
         <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-bold text-slate-900 truncate">{c.companyNm}</h3>
+            <h3 className="text-lg font-bold text-slate-900 truncate">{p.prodDes}</h3>
             <div className="flex items-center gap-2 mt-1.5">
-              <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${SOURCE_COLORS[source]}`}>
-                {SOURCE_LABELS[source]}
+              <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${SOURCE_COLORS[p.source] || 'bg-slate-100 text-slate-600'}`}>
+                {SOURCE_LABELS[p.source] || p.source}
               </span>
-              {c.companyType && (
-                <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium border ${TYPE_COLORS[c.companyType]}`}>
-                  {TYPE_LABELS[c.companyType]}
-                </span>
-              )}
-              {c.isActive ? (
+              {p.isActive ? (
                 <span className="inline-flex items-center gap-1 text-xs text-green-600">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500" />활성
                 </span>
@@ -765,6 +740,9 @@ function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
                 </span>
               )}
             </div>
+            {p.prodDes2 && (
+              <p className="text-xs text-slate-400 mt-1">{p.prodDes2}</p>
+            )}
           </div>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -780,34 +758,54 @@ function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
         <div>
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">기본정보</div>
           <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
-            <InfoRow label="거래처코드" value={c.companyCd} />
-            <InfoRow label="사업자번호" value={c.bizNo} />
-            <InfoRow label="대표자" value={c.ceoNm} />
-            <InfoRow label="전화" value={c.tel} />
-            <InfoRow label="팩스" value={c.fax} />
-            <InfoRow label="이메일" value={c.email} />
-            <InfoRow label="주소" value={c.addr} />
+            <InfoRow label="품목코드" value={p.prodCd} />
+            <InfoRow label="단위" value={p.unit} />
+            <InfoRow label="분류코드" value={p.classCd} />
+            <InfoRow label="분류명" value={p.classDes} />
           </div>
         </div>
 
-        {/* 담당자 정보 */}
-        {(c.managerNm || c.managerTel || c.managerEmail) && (
+        {/* 가격 정보 */}
+        <div>
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">가격 정보</div>
+          <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
+            <div className="flex items-start py-2">
+              <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">판매가</span>
+              <span className="text-sm text-slate-700 font-medium">{p.sellPrice ? `${p.sellPrice.toLocaleString()}원` : '-'}</span>
+            </div>
+            <div className="flex items-start py-2">
+              <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">원가</span>
+              <span className="text-sm text-slate-700 font-medium">{p.costPrice ? `${p.costPrice.toLocaleString()}원` : '-'}</span>
+            </div>
+            {p.sellPrice > 0 && p.costPrice > 0 && (
+              <div className="flex items-start py-2">
+                <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">마진</span>
+                <span className="text-sm text-emerald-600 font-medium">
+                  {((p.sellPrice - p.costPrice) / p.sellPrice * 100).toFixed(1)}%
+                  ({(p.sellPrice - p.costPrice).toLocaleString()}원)
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 브랜드/제조사 */}
+        {(p.brand || p.manufacturer) && (
           <div>
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">담당자 정보</div>
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">브랜드 / 제조사</div>
             <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
-              <InfoRow label="담당자" value={c.managerNm} />
-              <InfoRow label="전화" value={c.managerTel} />
-              <InfoRow label="이메일" value={c.managerEmail} />
+              <InfoRow label="브랜드" value={p.brand} />
+              <InfoRow label="제조사" value={p.manufacturer} />
             </div>
           </div>
         )}
 
         {/* 메모 */}
-        {c.memo && (
+        {p.memo && (
           <div>
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">메모</div>
             <div className="bg-slate-50/50 rounded-xl p-3">
-              <p className="text-sm text-slate-600 whitespace-pre-wrap">{c.memo}</p>
+              <p className="text-sm text-slate-600 whitespace-pre-wrap">{p.memo}</p>
             </div>
           </div>
         )}
@@ -816,23 +814,23 @@ function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
         <div>
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">부가정보</div>
           <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
-            <InfoRow label="등록일" value={c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : null} />
-            <InfoRow label="수정일" value={c.updatedAt ? new Date(c.updatedAt).toLocaleDateString('ko-KR') : null} />
-            {c.kprosIdx && <InfoRow label="KPROS ID" value={String(c.kprosIdx)} />}
+            <InfoRow label="등록일" value={p.createdAt ? new Date(p.createdAt).toLocaleDateString('ko-KR') : null} />
+            <InfoRow label="수정일" value={p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('ko-KR') : null} />
+            {p.kprosProductIdx && <InfoRow label="KPROS ID" value={String(p.kprosProductIdx)} />}
           </div>
         </div>
       </div>
 
       {/* 패널 하단 버튼 */}
       <div className="flex-shrink-0 px-5 py-4 border-t border-slate-100 flex gap-2">
-        <button onClick={() => onEdit(c)}
+        <button onClick={() => onEdit(p)}
           className="flex-1 px-4 py-2.5 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition-colors flex items-center justify-center gap-2">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
           </svg>
           수정
         </button>
-        <button onClick={() => onDelete(c.id, c.companyNm)}
+        <button onClick={() => onDelete(p.id, p.prodDes)}
           className="px-4 py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors flex items-center justify-center gap-2">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
+import { setCache, getCache } from '@/lib/cache';
 
 interface WorkflowItem {
   id: number;
@@ -92,6 +93,8 @@ export default function WorkflowsPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [usingCache, setUsingCache] = useState(false);
+  const [cacheAge, setCacheAge] = useState('');
 
   const loadData = async () => {
     setLoading(true);
@@ -109,9 +112,26 @@ export default function WorkflowsPage() {
       const wfJson = await wfRes.json();
       const sumJson = await sumRes.json();
 
-      if (wfJson.status === 'success') setWorkflows(wfJson.data || []);
-      if (sumJson.status === 'success') setSummary(sumJson.data);
-    } catch { /* silent */ }
+      if (wfJson.status === 'success') {
+        setWorkflows(wfJson.data || []);
+        setCache('cache:workflows', wfJson.data || []);
+      }
+      if (sumJson.status === 'success') {
+        setSummary(sumJson.data);
+        setCache('cache:workflows:summary', sumJson.data);
+      }
+      setUsingCache(false);
+    } catch {
+      // API 실패 시 캐시 fallback
+      const cachedWf = getCache<WorkflowItem[]>('cache:workflows');
+      const cachedSum = getCache<Summary>('cache:workflows:summary');
+      if (cachedWf) {
+        setWorkflows(cachedWf.data);
+        setUsingCache(true);
+        setCacheAge(cachedWf.age);
+      }
+      if (cachedSum) setSummary(cachedSum.data);
+    }
     setLoading(false);
   };
 
@@ -410,6 +430,18 @@ export default function WorkflowsPage() {
       </div>
 
       {message && <div className="px-4 py-3 bg-brand-50 border border-brand-200 text-brand-700 text-sm rounded-2xl animate-fadeIn">{message}</div>}
+
+      {usingCache && (
+        <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center gap-2 text-sm text-amber-700">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+            </svg>
+            <span>오프라인 캐시 데이터를 표시 중 ({cacheAge} 저장)</span>
+          </div>
+          <button onClick={() => loadData()} className="text-xs font-medium text-amber-800 hover:text-amber-900 underline">새로고침</button>
+        </div>
+      )}
 
       {/* 요약 카드 */}
       {summary && (

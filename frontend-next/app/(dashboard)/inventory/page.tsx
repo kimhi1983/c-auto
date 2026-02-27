@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { apiUrl, authHeaders } from '@/lib/api';
+import { setCache, getCache } from '@/lib/cache';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import ReactMarkdown from 'react-markdown';
@@ -93,6 +94,8 @@ export default function InventoryPage() {
   const [sortField, setSortField] = useState<SortField>('productNm');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [isStale, setIsStale] = useState(false);
+  const [usingCache, setUsingCache] = useState(false);
+  const [cacheAge, setCacheAge] = useState('');
 
   // ── 판매분석 상태 ──
   const [salesPhase, setSalesPhase] = useState<SalesPhase>('upload');
@@ -131,11 +134,27 @@ export default function InventoryPage() {
           warehouses: whSummary,
         });
         if (json.stale) setIsStale(true);
+        setCache('cache:inventory:kpros-stock', {
+          ...raw,
+          items: filteredWh,
+          totalCount: filteredWh.length,
+          totalQty: filteredWh.reduce((s: number, i: KprosStockItem) => s + i.sumStockQty, 0),
+          warehouses: whSummary,
+        });
+        setUsingCache(false);
       } else {
         setKprosError(json.message || 'KPROS 재고 조회 실패');
       }
     } catch {
-      setKprosError('네트워크 오류');
+      // API 실패 시 캐시 fallback
+      const cached = getCache<KprosStockData>('cache:inventory:kpros-stock');
+      if (cached) {
+        setKprosData(cached.data);
+        setUsingCache(true);
+        setCacheAge(cached.age);
+      } else {
+        setKprosError('네트워크 오류');
+      }
     } finally {
       setKprosLoading(false);
     }
@@ -395,6 +414,18 @@ export default function InventoryPage() {
           </div>
         </div>
       </div>
+
+      {usingCache && (
+        <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center gap-2 text-sm text-amber-700">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+            </svg>
+            <span>오프라인 캐시 데이터를 표시 중 ({cacheAge} 저장)</span>
+          </div>
+          <button onClick={() => fetchKprosStock(true)} className="text-xs font-medium text-amber-800 hover:text-amber-900 underline">새로고침</button>
+        </div>
+      )}
 
       {/* ── KPROS 통계 카드 (KPROS 탭) ── */}
       {activeTab === 'kpros' && kprosData && !kprosLoading && (

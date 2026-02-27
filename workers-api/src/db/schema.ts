@@ -266,6 +266,31 @@ export const companies = sqliteTable('companies', {
   index('idx_companies_biz_no').on(table.bizNo),
 ]);
 
+// ─── Products (품목 마스터) ───
+export const products = sqliteTable('products', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  prodCd: text('prod_cd'),
+  prodDes: text('prod_des').notNull(),
+  prodDes2: text('prod_des2'),
+  unit: text('unit'),
+  sellPrice: real('sell_price').default(0),
+  costPrice: real('cost_price').default(0),
+  classCd: text('class_cd'),
+  classDes: text('class_des'),
+  brand: text('brand'),
+  manufacturer: text('manufacturer'),
+  source: text('source').default('manual'),
+  kprosProductIdx: integer('kpros_product_idx'),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  memo: text('memo'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('idx_products_name').on(table.prodDes),
+  index('idx_products_class').on(table.classCd),
+  index('idx_products_source').on(table.source),
+]);
+
 // ═══════════════════════════════════════════
 // KPROS 물류관리 테이블 (7개)
 // ═══════════════════════════════════════════

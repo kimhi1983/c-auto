@@ -231,12 +231,17 @@ async function apiCall(
   });
 
   if (!res.ok) {
-    // 인증 만료 시 재로그인 후 재시도
-    if ((res.status === 401 || res.status === 403) && retry) {
+    // 응답 본문을 먼저 읽어서 상세 에러 확인
+    let bodyText = "";
+    try { bodyText = await res.text(); } catch { /* ignore */ }
+
+    // 401/403/500 모두 세션 만료 가능 — 재시도
+    if ((res.status === 401 || res.status === 403 || res.status === 500) && retry) {
+      console.warn("[Ecount] HTTP " + res.status + " on " + endpoint + " — 세션 갱신 후 재시도. body: " + bodyText.slice(0, 200));
       await refreshSession(env);
       return apiCall(env, endpoint, params, false);
     }
-    throw new Error(`이카운트 API 호출 실패 (${res.status}): ${endpoint}`);
+    throw new Error("이카운트 API 호출 실패 (" + res.status + "): " + endpoint + " — " + bodyText.slice(0, 200));
   }
 
   const data = (await res.json()) as EcountResponse;
@@ -248,8 +253,10 @@ async function apiCall(
     if (
       errorCode === "-1" ||
       errorCode === "SESSION_EXPIRED" ||
-      errorMsg === "Please login."
+      errorMsg === "Please login." ||
+      errorMsg.includes("login")
     ) {
+      console.warn("[Ecount] 세션 만료 감지 — 재로그인: " + errorMsg);
       await refreshSession(env);
       return apiCall(env, endpoint, params, false);
     }
@@ -258,7 +265,8 @@ async function apiCall(
   // 인증되지 않은 API 에러
   if (String(data.Status) !== "200") {
     const errorMsg = data.Error?.Message || data.Errors?.[0]?.Message || "Unknown error";
-    throw new Error(`이카운트 API 오류: ${errorMsg} (${endpoint})`);
+    console.error("[Ecount] API 오류 응답:", JSON.stringify(data).slice(0, 500));
+    throw new Error("이카운트 API 오류: " + errorMsg + " (" + endpoint + ")");
   }
 
   return data;
@@ -413,18 +421,25 @@ export async function getProducts(
   env: Env,
   pageNum = 1,
   perPage = 1000
-): Promise<{ items: ProductItem[]; totalCount: number }> {
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const data = await apiCall(env, "/OAPI/V2/InventoryBasic/GetBasicProductsList", {
-    BASE_DATE: today,
-    PAGE_NUM: String(pageNum),
-    PER_PAGE_NUM: String(perPage),
-  });
+): Promise<{ items: ProductItem[]; totalCount: number; error?: string }> {
+  try {
+    // 품목 마스터 조회 — BASE_DATE 불필요 (GetBasicCustList와 동일 패턴)
+    const data = await apiCall(env, "/OAPI/V2/InventoryBasic/GetBasicProductsList", {
+      PAGE_NUM: String(pageNum),
+      PER_PAGE_NUM: String(perPage),
+    });
 
-  // 실제 응답: Data.Result 배열, Data.TotalCnt
-  const items: ProductItem[] = data.Data?.Result || data.Data?.Datas || [];
-  const totalCount = data.Data?.TotalCnt || items.length;
-  return { items: Array.isArray(items) ? items : [], totalCount };
+    const items: ProductItem[] = data.Data?.Result || data.Data?.Datas || [];
+    const totalCount = data.Data?.TotalCnt || items.length;
+    return { items: Array.isArray(items) ? items : [], totalCount };
+  } catch (e: any) {
+    const msg = e.message || "";
+    if (msg.includes("Not Found") || msg.includes("인증되지 않은")) {
+      console.warn("[ERP] GetBasicProductsList API 미인증:", msg);
+      return { items: [], totalCount: 0, error: "품목조회 API(GetBasicProductsList)가 아직 인증되지 않았습니다. 이카운트 OAPI 관리 페이지에서 API 인증을 완료해주세요." };
+    }
+    throw e;
+  }
 }
 
 // ─── 품목 조회 (단건) ───
