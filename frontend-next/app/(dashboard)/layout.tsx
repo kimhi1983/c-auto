@@ -14,6 +14,7 @@ interface User {
   role: string;
   department: string;
   is_active: boolean;
+  menu_permissions?: string | null;  // JSON 배열 문자열, null=전체 접근
 }
 
 interface NavChild {
@@ -333,7 +334,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           {NAV_SECTIONS.map((section, sIdx) => {
             // adminOnly 필터링
-            const visibleItems = section.items.filter(item => !item.adminOnly || user?.role === 'admin');
+            const visibleItems = section.items.filter(item => {
+              // adminOnly 체크 (기존 로직)
+              if (item.adminOnly && user?.role !== 'admin') return false;
+              // admin은 모든 메뉴 표시
+              if (user?.role === 'admin') return true;
+              // 대시보드는 항상 표시
+              if (item.href === '/dashboard') return true;
+              // menu_permissions가 null이면 전체 접근
+              if (!user?.menu_permissions) return true;
+              // 권한 목록에서 체크
+              try {
+                const allowed: string[] = JSON.parse(user.menu_permissions);
+                return allowed.includes(item.href);
+              } catch { return true; }
+            });
             if (visibleItems.length === 0) return null;
 
             return (

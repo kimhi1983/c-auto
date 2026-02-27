@@ -97,6 +97,7 @@ auth.post("/login", zValidator("json", UserLoginSchema), async (c) => {
       full_name: user.fullName,
       role: user.role,
       department: user.department,
+      menu_permissions: user.menuPermissions,
     },
   });
 });
@@ -126,6 +127,7 @@ auth.get("/me", authMiddleware, async (c) => {
     department: user.department,
     is_active: user.isActive,
     created_at: user.createdAt,
+    menu_permissions: user.menuPermissions,
   });
 });
 

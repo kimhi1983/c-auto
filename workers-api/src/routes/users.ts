@@ -26,6 +26,7 @@ usersRouter.get("/", async (c) => {
       role: users.role,
       department: users.department,
       isActive: users.isActive,
+      menuPermissions: users.menuPermissions,
       createdAt: users.createdAt,
     })
     .from(users)
@@ -39,6 +40,7 @@ usersRouter.get("/", async (c) => {
     role: u.role,
     department: u.department,
     is_active: u.isActive,
+    menu_permissions: u.menuPermissions,
     created_at: u.createdAt,
   }));
 
@@ -85,6 +87,7 @@ usersRouter.patch("/:id", async (c) => {
     department?: string;
     is_active?: boolean;
     password?: string;
+    menu_permissions?: string[] | null;
   }>();
 
   const db = drizzle(c.env.DB);
@@ -97,6 +100,11 @@ usersRouter.patch("/:id", async (c) => {
   if (body.department !== undefined) updateData.department = body.department;
   if (body.is_active !== undefined) updateData.isActive = body.is_active;
   if (body.password) updateData.passwordHash = await hash(body.password, 12);
+  if (body.menu_permissions !== undefined) {
+    updateData.menuPermissions = body.menu_permissions === null
+      ? null
+      : JSON.stringify(body.menu_permissions);
+  }
 
   const [updated] = await db
     .update(users)
@@ -115,6 +123,7 @@ usersRouter.patch("/:id", async (c) => {
     role: updated.role,
     department: updated.department,
     is_active: updated.isActive,
+    menu_permissions: updated.menuPermissions,
   });
 });
 

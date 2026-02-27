@@ -10,6 +10,7 @@ export const users = sqliteTable('users', {
   role: text('role').notNull().default('staff'),
   department: text('department'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  menuPermissions: text('menu_permissions'),  // JSON 배열: 허용 메뉴 href 목록, null=전체
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
 });

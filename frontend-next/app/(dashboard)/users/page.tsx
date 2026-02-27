@@ -11,7 +11,25 @@ interface User {
   department: string;
   is_active: boolean;
   created_at: string;
+  menu_permissions?: string | null;
 }
+
+// 메뉴 권한 설정용 목록
+const MENU_ITEMS: { key: string; label: string; section: string }[] = [
+  { key: '/erp/sales', label: '판매입력', section: '업무' },
+  { key: '/erp/purchases', label: '구매입력', section: '업무' },
+  { key: '/approvals', label: '승인관리', section: '업무' },
+  { key: '/warehouse-portal', label: '출고/입고 관리', section: '창고 포털' },
+  { key: '/inventory/coa', label: '성적서(CoA)', section: '창고 포털' },
+  { key: '/workflows', label: '주문처리', section: '관리' },
+  { key: '/inventory', label: '재고 현황', section: '관리' },
+  { key: '/kpros', label: '거래처 관리', section: '관리' },
+  { key: '/products', label: '품목 관리', section: '관리' },
+  { key: '/materials', label: '원료 정보', section: '정보' },
+  { key: '/archives', label: '리포트', section: '정보' },
+  { key: '/emails', label: '이메일', section: '시스템' },
+];
+const MENU_SECTIONS = ['업무', '창고 포털', '관리', '정보', '시스템'];
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -33,6 +51,7 @@ export default function UsersPage() {
     department: '',
     is_active: true,
     password: '',
+    menu_permissions: null as string[] | null,
   });
 
   const loadUsers = async () => {
@@ -100,6 +119,7 @@ export default function UsersPage() {
         role: editForm.role,
         department: editForm.department,
         is_active: editForm.is_active,
+        menu_permissions: editForm.menu_permissions,
       };
       if (editForm.password) body.password = editForm.password;
 
@@ -145,12 +165,17 @@ export default function UsersPage() {
 
   const startEdit = (user: User) => {
     setEditingUser(user);
+    let parsedPerms: string[] | null = null;
+    if (user.menu_permissions) {
+      try { parsedPerms = JSON.parse(user.menu_permissions); } catch { parsedPerms = null; }
+    }
     setEditForm({
       full_name: user.full_name,
       role: user.role,
       department: user.department || '',
       is_active: user.is_active,
       password: '',
+      menu_permissions: parsedPerms,
     });
     setShowForm(false);
   };
@@ -340,6 +365,93 @@ export default function UsersPage() {
                 </label>
               </div>
             </div>
+            {/* 메뉴 접근 권한 */}
+            <div className="md:col-span-2 border-t border-slate-100 pt-4 mt-2">
+              <div className="flex items-center justify-between mb-3">
+                <label className="block text-xs font-semibold text-slate-700">메뉴 접근 권한</label>
+                {editForm.role !== 'admin' && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editForm.menu_permissions === null}
+                      onChange={(e) => {
+                        setEditForm({
+                          ...editForm,
+                          menu_permissions: e.target.checked ? null : MENU_ITEMS.map(m => m.key),
+                        });
+                      }}
+                      className="w-4 h-4 rounded text-brand-500"
+                    />
+                    <span className="text-xs text-slate-600">전체 메뉴 접근</span>
+                  </label>
+                )}
+              </div>
+              {editForm.role === 'admin' ? (
+                <p className="text-xs text-slate-400">관리자는 모든 메뉴에 접근할 수 있습니다.</p>
+              ) : editForm.menu_permissions === null ? (
+                <p className="text-xs text-slate-400">전체 메뉴에 접근할 수 있습니다. 특정 메뉴만 허용하려면 체크를 해제하세요.</p>
+              ) : (
+                <div className="space-y-3">
+                  {MENU_SECTIONS.map(section => {
+                    const sectionItems = MENU_ITEMS.filter(m => m.section === section);
+                    const allChecked = sectionItems.every(m => editForm.menu_permissions!.includes(m.key));
+                    return (
+                      <div key={section}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const perms = editForm.menu_permissions!;
+                              const keys = sectionItems.map(m => m.key);
+                              if (allChecked) {
+                                setEditForm({ ...editForm, menu_permissions: perms.filter(k => !keys.includes(k)) });
+                              } else {
+                                setEditForm({ ...editForm, menu_permissions: [...new Set([...perms, ...keys])] });
+                              }
+                            }}
+                            className="text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:text-slate-600"
+                          >
+                            {section}
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {sectionItems.map(item => {
+                            const checked = editForm.menu_permissions!.includes(item.key);
+                            return (
+                              <label
+                                key={item.key}
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs cursor-pointer transition ${
+                                  checked
+                                    ? 'bg-brand-50 border-brand-200 text-brand-700'
+                                    : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    const perms = editForm.menu_permissions!;
+                                    setEditForm({
+                                      ...editForm,
+                                      menu_permissions: e.target.checked
+                                        ? [...perms, item.key]
+                                        : perms.filter(k => k !== item.key),
+                                    });
+                                  }}
+                                  className="w-3.5 h-3.5 rounded text-brand-500"
+                                />
+                                {item.label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <div className="md:col-span-2 flex gap-2 justify-end">
               <button type="button" onClick={() => setEditingUser(null)}
                 className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
