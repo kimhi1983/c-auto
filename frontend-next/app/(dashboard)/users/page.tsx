@@ -190,6 +190,7 @@ export default function UsersPage() {
     approver: '승인자',
     staff: '직원',
     viewer: '뷰어',
+    warehouse_manager: '창고 관리자',
   };
 
   const roleColor: Record<string, string> = {
@@ -197,6 +198,7 @@ export default function UsersPage() {
     approver: 'bg-blue-50 text-blue-700',
     staff: 'bg-green-50 text-green-700',
     viewer: 'bg-slate-100 text-slate-600',
+    warehouse_manager: 'bg-amber-50 text-amber-700',
   };
 
   return (
@@ -281,6 +283,7 @@ export default function UsersPage() {
               >
                 <option value="staff">직원</option>
                 <option value="approver">승인자</option>
+                <option value="warehouse_manager">창고 관리자</option>
                 <option value="viewer">뷰어</option>
                 <option value="admin">관리자</option>
               </select>
@@ -351,6 +354,7 @@ export default function UsersPage() {
               >
                 <option value="staff">직원</option>
                 <option value="approver">승인자</option>
+                <option value="warehouse_manager">창고 관리자</option>
                 <option value="viewer">뷰어</option>
                 <option value="admin">관리자</option>
               </select>

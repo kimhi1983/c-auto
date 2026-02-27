@@ -273,7 +273,7 @@ export default function SalesInputPage() {
         );
         const json = await res.json();
         if (json.status === 'success') {
-          setCustResults(json.data?.companies || []);
+          setCustResults(json.data || []);
         }
       } catch { /* ignore */ } finally {
         setCustLoading(false);

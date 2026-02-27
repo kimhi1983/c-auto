@@ -209,7 +209,7 @@ export default function PurchasesInputPage() {
       try {
         const res = await fetch(apiUrl(`/api/v1/kpros/companies?search=${encodeURIComponent(custSearch)}&limit=10`), { headers: authHeaders() });
         const json = await res.json();
-        if (json.status === 'success') setCustResults(json.data?.companies || []);
+        if (json.status === 'success') setCustResults(json.data || []);
       } catch { /* ignore */ } finally { setCustLoading(false); }
     }, 300);
     return () => { if (custDebounceRef.current) clearTimeout(custDebounceRef.current); };
