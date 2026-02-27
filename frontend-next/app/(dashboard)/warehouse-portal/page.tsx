@@ -43,12 +43,15 @@ interface CoaDoc {
 
 // ─── Constants ───
 
-type WarehouseCode = 'mk' | 'mansuk' | 'wellrise';
+type WarehouseCode = 'mk' | 'mansuk' | 'wellrise' | 'ecofarm' | 'playground' | 'kpros';
 
 const WAREHOUSES: { code: WarehouseCode; label: string; color: string; gradient: string; whCodes: string[] }[] = [
   { code: 'mk', label: 'MK물류', color: '#1565C0', gradient: 'from-blue-600 to-blue-700', whCodes: ['MK', 'MK물류', 'WH-MK'] },
   { code: 'mansuk', label: '만석물류', color: '#2E7D32', gradient: 'from-green-600 to-green-700', whCodes: ['만석', '만석물류', 'WH-MS'] },
   { code: 'wellrise', label: '웰라이즈', color: '#E65100', gradient: 'from-orange-600 to-orange-700', whCodes: ['웰라이즈', 'WH-WR'] },
+  { code: 'ecofarm', label: '에코스팜', color: '#7B1FA2', gradient: 'from-purple-600 to-purple-700', whCodes: ['에코스팜', 'WH-EF'] },
+  { code: 'playground', label: '플레이그라운드', color: '#00838F', gradient: 'from-cyan-700 to-cyan-800', whCodes: ['플레이그라운드', 'WH-PG'] },
+  { code: 'kpros', label: '케이프로스', color: '#F57F17', gradient: 'from-yellow-600 to-yellow-700', whCodes: ['케이프로스', 'KPROS', 'WH-KP'] },
 ];
 
 type ViewTab = 'orders' | 'history' | 'coa';
