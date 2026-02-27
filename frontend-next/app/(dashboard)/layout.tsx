@@ -334,20 +334,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           {NAV_SECTIONS.map((section, sIdx) => {
             // adminOnly 필터링
+            // 권한 목록 파싱 (한 번만)
+            let allowedMenus: string[] | null = null;
+            if (user?.menu_permissions && user?.role !== 'admin') {
+              try { allowedMenus = JSON.parse(user.menu_permissions); } catch { /* 파싱 실패 시 전체 접근 */ }
+            }
+
             const visibleItems = section.items.filter(item => {
-              // adminOnly 체크 (기존 로직)
               if (item.adminOnly && user?.role !== 'admin') return false;
-              // admin은 모든 메뉴 표시
               if (user?.role === 'admin') return true;
-              // 대시보드는 항상 표시
               if (item.href === '/dashboard') return true;
-              // menu_permissions가 null이면 전체 접근
-              if (!user?.menu_permissions) return true;
-              // 권한 목록에서 체크
-              try {
-                const allowed: string[] = JSON.parse(user.menu_permissions);
-                return allowed.includes(item.href);
-              } catch { return true; }
+              if (!allowedMenus) return true;  // null = 전체 접근
+              // children이 있는 항목 (창고): 하위 항목 중 하나라도 허용되면 표시
+              if (item.children) {
+                return item.children.some(child => allowedMenus!.includes(child.href));
+              }
+              return allowedMenus.includes(item.href);
             });
             if (visibleItems.length === 0) return null;
 
@@ -408,7 +410,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           </button>
                           {sidebarOpen && isExpanded && (
                             <div className="ml-5 pl-3 border-l border-slate-200/80 mt-0.5 space-y-0.5">
-                              {item.children!.map((child) => {
+                              {item.children!.filter(child => {
+                                if (user?.role === 'admin') return true;
+                                if (!allowedMenus) return true;
+                                return allowedMenus.includes(child.href);
+                              }).map((child) => {
                                 const cActive = isChildActive(child.href);
                                 return (
                                   <Link
