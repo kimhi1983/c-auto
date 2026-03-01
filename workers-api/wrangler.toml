@@ -1,0 +1,51 @@
+name = "c-auto-workers-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database Binding
+# 로컬 개발 시: wrangler d1 execute c-auto-db --local --file=migrations/0001_initial.sql
+# 배포 시: wrangler d1 create c-auto-db 명령어로 ID 생성 후 아래 database_id 교체
+[[d1_databases]]
+binding = "DB"
+database_name = "c-auto-db"
+database_id = "5f389eb1-8b1f-4391-bd99-7d994ad014e4"
+
+# KV Namespace (cache - 환율 등 캐시용)
+# 배포 시: wrangler kv namespace create CACHE 로 생성 후 id 교체
+[[kv_namespaces]]
+binding = "CACHE"
+id = "f79df338acaa4a9abe40e4f90e0fe882"
+
+# Workers AI Binding
+[ai]
+binding = "AI"
+
+# R2 Bucket (파일 저장소)
+# Cloudflare Dashboard에서 R2 활성화 후 아래 주석 해제
+# wrangler r2 bucket create c-auto-files 로 생성
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "c-auto-files"
+
+# Smart Placement — Gemini API가 지원하는 리전(US)에서 Workers 실행
+[placement]
+mode = "smart"
+
+# 환경 변수 (개발용 기본값)
+[vars]
+JWT_SECRET = "dev-secret-key-change-in-prod"
+JWT_EXPIRE_MINUTES = "1440"
+ALLOWED_ORIGINS = "http://localhost:3000,https://c-auto.pages.dev"
+ENVIRONMENT = "production"
+
+# Cron Triggers - 5분마다 새 메일 가져오기 + 30일 지난 메일 자동삭제
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Secrets (배포 시 wrangler secret put 명령어로 설정):
+# wrangler secret put JWT_SECRET  (프로덕션용 강력한 키로 교체)
+# wrangler secret put GEMINI_API_KEY       (Gemini Flash - 분류/요약/스팸필터 90%)
+# wrangler secret put ANTHROPIC_API_KEY    (Claude Haiku 4.5 + Sonnet 4.5 - 분석/답변)
+# wrangler secret put GMAIL_CLIENT_ID
+# wrangler secret put GMAIL_CLIENT_SECRET

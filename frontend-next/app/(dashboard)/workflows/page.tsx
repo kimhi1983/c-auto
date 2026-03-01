@@ -1,0 +1,579 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { apiUrl, authHeaders, authJsonHeaders } from '@/lib/api';
+import { setCache, getCache } from '@/lib/cache';
+
+interface WorkflowItem {
+  id: number;
+  workflowType: string;
+  status: string;
+  orderNumber: string | null;
+  ioDate: string;
+  custCd: string | null;
+  custName: string | null;
+  customerName: string | null;
+  itemsData: string;
+  items: { PROD_CD?: string; PROD_DES?: string; QTY?: string; PRICE?: string; UNIT_PRICE?: string; SUPPLY_AMT?: string; WH_CD?: string; REMARKS?: string }[];
+  totalAmount: number;
+  erpSubmittedAt: string | null;
+  approvedAt: string | null;
+  rejectionReason: string | null;
+  step2At: string | null;
+  step3At: string | null;
+  step4At: string | null;
+  step5At: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+  steps: string[];
+  labels: Record<string, string>;
+}
+
+interface Summary {
+  sales: { total: number; active: number; completed: number; byStatus: Record<string, number> };
+  purchase: { total: number; active: number; completed: number; byStatus: Record<string, number> };
+}
+
+const SALES_STEPS = ['ERP_SUBMITTED', 'SHIPPING_ORDER', 'PICKING', 'SHIPPED', 'DELIVERED'];
+const PURCHASE_STEPS = ['ERP_SUBMITTED', 'RECEIVING_SCHEDULED', 'INSPECTING', 'RECEIVED', 'STOCKED'];
+
+const SALES_LABELS: Record<string, string> = {
+  ERP_SUBMITTED: '판매입력완료', SHIPPING_ORDER: '출고지시', PICKING: '피킹/포장', SHIPPED: '출고완료', DELIVERED: '납품완료',
+};
+const PURCHASE_LABELS: Record<string, string> = {
+  ERP_SUBMITTED: '구매입력완료', RECEIVING_SCHEDULED: '입고예정', INSPECTING: '입고검수', RECEIVED: '입고완료', STOCKED: '재고반영',
+};
+
+function getSteps(type: string) { return type === 'SALES' ? SALES_STEPS : PURCHASE_STEPS; }
+function getLabels(type: string) { return type === 'SALES' ? SALES_LABELS : PURCHASE_LABELS; }
+
+function formatDate(d: string | null) {
+  if (!d) return '-';
+  return new Date(d).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatIoDate(d: string) {
+  if (d.length === 8) return `${d.slice(0, 4)}.${d.slice(4, 6)}.${d.slice(6, 8)}`;
+  return d;
+}
+
+// 승인 전 상태 라벨
+const PRE_LABELS: Record<string, string> = {
+  DRAFT: '임시저장',
+  PENDING_APPROVAL: '승인대기',
+  APPROVED: '승인완료',
+  REJECTED: '반려',
+};
+
+function getStatusLabel(status: string, type: string) {
+  if (PRE_LABELS[status]) return PRE_LABELS[status];
+  return getLabels(type)[status] || status;
+}
+
+// 상태 뱃지 색상
+function statusColor(status: string, type: string) {
+  if (status === 'DRAFT') return 'bg-slate-100 text-slate-600';
+  if (status === 'PENDING_APPROVAL') return 'bg-amber-100 text-amber-700';
+  if (status === 'REJECTED') return 'bg-red-100 text-red-700';
+  const steps = getSteps(type);
+  const idx = steps.indexOf(status);
+  if (idx === steps.length - 1) return 'bg-green-100 text-green-700';
+  if (idx >= steps.length - 2) return 'bg-blue-100 text-blue-700';
+  if (idx >= 1) return 'bg-amber-100 text-amber-700';
+  return 'bg-emerald-100 text-emerald-700';
+}
+
+export default function WorkflowsPage() {
+  const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<'ALL' | 'SALES' | 'PURCHASE'>('ALL');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [usingCache, setUsingCache] = useState(false);
+  const [cacheAge, setCacheAge] = useState('');
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (filter !== 'ALL') params.set('type', filter);
+      if (statusFilter) params.set('status', statusFilter);
+      params.set('limit', '100');
+
+      const [wfRes, sumRes] = await Promise.all([
+        fetch(apiUrl(`/api/v1/workflows?${params}`), { headers: authHeaders() }),
+        fetch(apiUrl('/api/v1/workflows/summary'), { headers: authHeaders() }),
+      ]);
+
+      const wfJson = await wfRes.json();
+      const sumJson = await sumRes.json();
+
+      if (wfJson.status === 'success') {
+        setWorkflows(wfJson.data || []);
+        setCache('cache:workflows', wfJson.data || []);
+      }
+      if (sumJson.status === 'success') {
+        setSummary(sumJson.data);
+        setCache('cache:workflows:summary', sumJson.data);
+      }
+      setUsingCache(false);
+    } catch {
+      // API 실패 시 캐시 fallback
+      const cachedWf = getCache<WorkflowItem[]>('cache:workflows');
+      const cachedSum = getCache<Summary>('cache:workflows:summary');
+      if (cachedWf) {
+        setWorkflows(cachedWf.data);
+        setUsingCache(true);
+        setCacheAge(cachedWf.age);
+      }
+      if (cachedSum) setSummary(cachedSum.data);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { loadData(); }, [filter, statusFilter]);
+
+  const advanceStatus = async (id: number, action: 'next' | 'prev') => {
+    setActionLoading(true);
+    try {
+      const res = await fetch(apiUrl(`/api/v1/workflows/${id}/status`), {
+        method: 'PATCH',
+        headers: authJsonHeaders(),
+        body: JSON.stringify({ action }),
+      });
+      const json = await res.json();
+      if (json.status === 'success') {
+        setMessage(json.message);
+        loadData();
+      } else {
+        setMessage(json.message || '상태 변경 실패');
+      }
+    } catch { setMessage('네트워크 오류'); }
+    setActionLoading(false);
+    setTimeout(() => setMessage(''), 3000);
+  };
+
+  const deleteWorkflow = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    if (!confirm('이 워크플로우를 삭제하시겠습니까?')) return;
+    try {
+      const res = await fetch(apiUrl(`/api/v1/workflows/${id}`), { method: 'DELETE', headers: authHeaders() });
+      if (res.ok) { loadData(); setMessage('삭제 완료'); if (selectedId === id) setSelectedId(null); }
+    } catch { /* silent */ }
+    setTimeout(() => setMessage(''), 3000);
+  };
+
+  const selected = workflows.find(w => w.id === selectedId);
+
+  // 스텝 진행률 바
+  const StepProgress = ({ workflow: w }: { workflow: WorkflowItem }) => {
+    const steps = getSteps(w.workflowType);
+    const labels = getLabels(w.workflowType);
+    const currentIdx = steps.indexOf(w.status);
+    const timestamps = [w.erpSubmittedAt, w.step2At, w.step3At, w.step4At, w.step5At];
+
+    return (
+      <div className="flex items-center gap-0 w-full">
+        {steps.map((step, idx) => {
+          const isDone = idx <= currentIdx;
+          const isCurrent = idx === currentIdx;
+          const isLast = idx === steps.length - 1;
+          return (
+            <div key={step} className="flex items-center flex-1 min-w-0">
+              <div className="flex flex-col items-center flex-shrink-0">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                  isDone
+                    ? isCurrent
+                      ? 'bg-slate-900 text-white ring-4 ring-slate-200'
+                      : 'bg-green-500 text-white'
+                    : 'bg-slate-100 text-slate-400'
+                }`}>
+                  {isDone && !isCurrent ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    idx + 1
+                  )}
+                </div>
+                <div className={`text-[10px] mt-1 text-center leading-tight whitespace-nowrap ${isCurrent ? 'font-bold text-slate-900' : isDone ? 'text-green-600 font-medium' : 'text-slate-400'}`}>
+                  {labels[step]}
+                </div>
+                {timestamps[idx] && (
+                  <div className="text-[9px] text-slate-400">{formatDate(timestamps[idx])}</div>
+                )}
+              </div>
+              {!isLast && (
+                <div className={`flex-1 h-0.5 mx-1 rounded ${idx < currentIdx ? 'bg-green-400' : 'bg-slate-200'}`} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // 상세 뷰
+  if (selected) {
+    const steps = getSteps(selected.workflowType);
+    const labels = getLabels(selected.workflowType);
+    const currentIdx = steps.indexOf(selected.status);
+    const isComplete = currentIdx >= steps.length - 1;
+
+    return (
+      <div className="space-y-6 animate-fadeIn">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setSelectedId(null)} className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition">
+              <svg className="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              목록
+            </button>
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">
+                {selected.workflowType === 'SALES' ? '판매' : '구매'} 주문 #{selected.id}
+              </h1>
+              <p className="text-sm text-slate-500">{formatIoDate(selected.ioDate)} · {selected.customerName || selected.custName || selected.custCd}</p>
+            </div>
+          </div>
+          <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusColor(selected.status, selected.workflowType)}`}>
+            {getStatusLabel(selected.status, selected.workflowType)}
+          </span>
+        </div>
+
+        {message && <div className="px-4 py-3 bg-brand-50 border border-brand-200 text-brand-700 text-sm rounded-2xl">{message}</div>}
+
+        {/* 반려 사유 */}
+        {selected.status === 'REJECTED' && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-5 animate-fadeIn">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-bold text-red-800">승인 반려</h4>
+                <p className="text-sm text-red-700 mt-1">{selected.rejectionReason || '반려 사유가 기록되지 않았습니다.'}</p>
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <a
+                href={`/erp/${selected.workflowType === 'SALES' ? 'sales' : 'purchases'}?edit=${selected.id}`}
+                className="px-4 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition inline-flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                수정 후 재제출
+              </a>
+              <button
+                onClick={(e) => deleteWorkflow(e, selected.id)}
+                className="px-4 py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-xl hover:bg-red-50 transition"
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* DRAFT 상태 안내 */}
+        {selected.status === 'DRAFT' && (
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 animate-fadeIn">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-bold text-slate-700">임시 저장 상태</h4>
+                <p className="text-sm text-slate-500 mt-1">아직 승인 요청하지 않은 문서입니다.</p>
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <a
+                href={`/erp/${selected.workflowType === 'SALES' ? 'sales' : 'purchases'}?edit=${selected.id}`}
+                className="px-4 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition inline-flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                수정하기
+              </a>
+              <button
+                onClick={(e) => deleteWorkflow(e, selected.id)}
+                className="px-4 py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-xl hover:bg-red-50 transition"
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PENDING_APPROVAL 안내 */}
+        {selected.status === 'PENDING_APPROVAL' && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-amber-800">승인 대기 중</h4>
+                <p className="text-sm text-amber-700 mt-0.5">관리자의 승인을 기다리고 있습니다.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 진행 상태 (ERP 전송 이후 단계에서만 표시) */}
+        {currentIdx >= 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-6">
+            <h3 className="text-sm font-bold text-slate-900 mb-5">진행 상태</h3>
+            <StepProgress workflow={selected} />
+
+            <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100">
+              {currentIdx > 0 && (
+                <button
+                  onClick={() => advanceStatus(selected.id, 'prev')}
+                  disabled={actionLoading}
+                  className="px-4 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  이전 단계로
+                </button>
+              )}
+              {!isComplete && (
+                <button
+                  onClick={() => advanceStatus(selected.id, 'next')}
+                  disabled={actionLoading}
+                  className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition disabled:opacity-50"
+                >
+                  {actionLoading ? '처리 중...' : `${labels[steps[currentIdx + 1]]}(으)로 진행`}
+                </button>
+              )}
+              {isComplete && (
+                <span className="text-sm text-green-600 font-semibold">처리 완료</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 품목 정보 */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-6">
+          <h3 className="text-sm font-bold text-slate-900 mb-4">품목 내역</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-slate-500">
+                  <th className="text-left py-2 font-medium">품목코드</th>
+                  <th className="text-right py-2 font-medium">수량</th>
+                  <th className="text-right py-2 font-medium">단가</th>
+                  <th className="text-right py-2 font-medium">금액</th>
+                  <th className="text-left py-2 font-medium">창고</th>
+                  <th className="text-left py-2 font-medium">비고</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(selected.items || []).map((item, idx) => (
+                  <tr key={idx} className="border-b border-slate-50">
+                    <td className="py-2.5 font-medium text-slate-900">{item.PROD_CD}</td>
+                    <td className="py-2.5 text-right">{Number(item.QTY || 0).toLocaleString()}</td>
+                    <td className="py-2.5 text-right">{Number(item.PRICE || 0).toLocaleString()}</td>
+                    <td className="py-2.5 text-right font-semibold">{(Number(item.QTY || 0) * Number(item.PRICE || 0)).toLocaleString()}</td>
+                    <td className="py-2.5 text-slate-500">{item.WH_CD || '-'}</td>
+                    <td className="py-2.5 text-slate-500">{item.REMARKS || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-slate-200">
+                  <td className="py-2.5 font-bold" colSpan={3}>합계</td>
+                  <td className="py-2.5 text-right font-bold text-slate-900">{(selected.totalAmount || 0).toLocaleString()}원</td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        {/* 타임라인 */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-6">
+          <h3 className="text-sm font-bold text-slate-900 mb-4">처리 이력</h3>
+          <div className="space-y-3">
+            {[selected.erpSubmittedAt, selected.step2At, selected.step3At, selected.step4At, selected.step5At].map((ts, idx) => {
+              if (!ts) return null;
+              const stepLabels = getLabels(selected.workflowType);
+              const stepKeys = getSteps(selected.workflowType);
+              return (
+                <div key={idx} className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                  <span className="text-sm font-medium text-slate-700">{stepLabels[stepKeys[idx]]}</span>
+                  <span className="text-xs text-slate-400">{new Date(ts).toLocaleString('ko-KR')}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 목록 뷰
+  return (
+    <div className="space-y-6">
+      {/* 헤더 */}
+      <div className="animate-fadeIn">
+        <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
+          <span>ERP</span>
+          <span className="text-slate-300">/</span>
+          <span className="text-slate-700 font-medium">주문처리</span>
+        </div>
+        <h1 className="text-2xl font-bold text-slate-900">주문처리 현황</h1>
+        <p className="text-sm text-slate-500 mt-1">판매/구매 입력 후 출고·입고 완료까지 상태 추적</p>
+      </div>
+
+      {message && <div className="px-4 py-3 bg-brand-50 border border-brand-200 text-brand-700 text-sm rounded-2xl animate-fadeIn">{message}</div>}
+
+      {usingCache && (
+        <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center gap-2 text-sm text-amber-700">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+            </svg>
+            <span>오프라인 캐시 데이터를 표시 중 ({cacheAge} 저장)</span>
+          </div>
+          <button onClick={() => loadData()} className="text-xs font-medium text-amber-800 hover:text-amber-900 underline">새로고침</button>
+        </div>
+      )}
+
+      {/* 요약 카드 */}
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
+            <div className="text-2xl font-bold text-blue-600">{summary.sales.active}</div>
+            <div className="text-xs text-slate-500 mt-0.5">판매 진행 중</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
+            <div className="text-2xl font-bold text-green-600">{summary.sales.completed}</div>
+            <div className="text-xs text-slate-500 mt-0.5">판매 완료</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
+            <div className="text-2xl font-bold text-amber-600">{summary.purchase.active}</div>
+            <div className="text-xs text-slate-500 mt-0.5">구매 진행 중</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
+            <div className="text-2xl font-bold text-green-600">{summary.purchase.completed}</div>
+            <div className="text-xs text-slate-500 mt-0.5">구매 완료</div>
+          </div>
+        </div>
+      )}
+
+      {/* 필터 */}
+      <div className="flex items-center gap-3">
+        <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
+          {(['ALL', 'SALES', 'PURCHASE'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => { setFilter(f); setStatusFilter(''); }}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                filter === f ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {f === 'ALL' ? '전체' : f === 'SALES' ? '판매' : '구매'}
+            </button>
+          ))}
+        </div>
+
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700"
+        >
+          <option value="">모든 상태</option>
+          <option value="DRAFT">임시저장</option>
+          <option value="PENDING_APPROVAL">승인대기</option>
+          <option value="REJECTED">반려</option>
+          {(filter !== 'ALL' ? (filter === 'SALES' ? SALES_STEPS : PURCHASE_STEPS) : SALES_STEPS).map(s => (
+            <option key={s} value={s}>{(filter === 'SALES' ? SALES_LABELS : filter === 'PURCHASE' ? PURCHASE_LABELS : SALES_LABELS)[s]}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* 목록 */}
+      {loading ? (
+        <div className="text-center py-14 text-slate-400 text-sm">불러오는 중...</div>
+      ) : workflows.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-12 text-center animate-fadeInUp">
+          <svg className="w-10 h-10 text-slate-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+          <p className="text-sm text-slate-500">처리 중인 주문이 없습니다</p>
+          <p className="text-xs text-slate-400 mt-1">판매입력 또는 구매입력 시 자동으로 생성됩니다</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {workflows.map(w => {
+            const steps = getSteps(w.workflowType);
+            const labels = getLabels(w.workflowType);
+            const currentIdx = steps.indexOf(w.status);
+            const progress = ((currentIdx + 1) / steps.length) * 100;
+            const itemCount = (w.items || []).length;
+
+            return (
+              <div
+                key={w.id}
+                onClick={() => setSelectedId(w.id)}
+                className="bg-white rounded-2xl border border-slate-200 p-5 cursor-pointer transition-all hover:shadow-md hover:border-slate-300"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                      w.workflowType === 'SALES' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
+                    }`}>
+                      {w.workflowType === 'SALES' ? '판매' : '구매'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${statusColor(w.status, w.workflowType)}`}>
+                      {getStatusLabel(w.status, w.workflowType)}
+                    </span>
+                    <span className="text-sm font-semibold text-slate-900">#{w.id}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">{formatIoDate(w.ioDate)}</span>
+                    <button
+                      onClick={(e) => deleteWorkflow(e, w.id)}
+                      className="p-1 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm text-slate-700">
+                    <span className="font-medium">{w.customerName || w.custName || w.custCd || '-'}</span>
+                    <span className="text-slate-400 mx-2">·</span>
+                    <span>{itemCount}개 품목</span>
+                    <span className="text-slate-400 mx-2">·</span>
+                    <span className="font-semibold">{(w.totalAmount || 0).toLocaleString()}원</span>
+                  </div>
+                </div>
+
+                {/* 미니 프로그레스 바 */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${currentIdx >= steps.length - 1 ? 'bg-green-500' : 'bg-slate-800'}`}
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 flex-shrink-0">
+                    {currentIdx + 1}/{steps.length}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
