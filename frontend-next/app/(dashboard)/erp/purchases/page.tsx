@@ -541,17 +541,15 @@ export default function PurchasesInputPage() {
             {/* 일자 */}
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-500 w-16 shrink-0">일자</label>
-              <select value={date.year} onChange={e => setDate({ ...date, year: e.target.value })} className={headerSelectCls}>
-                {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <span className="text-slate-400">/</span>
-              <select value={date.month} onChange={e => setDate({ ...date, month: e.target.value })} className={`${headerSelectCls} w-16`}>
-                {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-              <span className="text-slate-400">/</span>
-              <select value={date.day} onChange={e => setDate({ ...date, day: e.target.value })} className={`${headerSelectCls} w-16`}>
-                {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
+              <input
+                type="date"
+                value={`${date.year}-${date.month}-${date.day}`}
+                onChange={e => {
+                  const [y, m, d] = e.target.value.split('-');
+                  if (y && m && d) setDate({ year: y, month: m, day: d });
+                }}
+                className={`${headerInputCls} w-44`}
+              />
             </div>
 
             {/* 거래처 - 자동완성 */}
