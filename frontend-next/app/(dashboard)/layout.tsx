@@ -79,6 +79,8 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/inventory', label: '재고 현황', icon: 'box' },
       { href: '/kpros', label: '거래처 관리', icon: 'building' },
       { href: '/products', label: '품목 관리', icon: 'product' },
+      { href: '/sales-history', label: '판매현황', icon: 'chart-up' },
+      { href: '/purchase-history', label: '구매현황', icon: 'chart-down' },
     ],
   },
   {
@@ -196,6 +198,18 @@ function NavIcon({ icon, className }: { icon: string; className?: string }) {
       return (
         <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+        </svg>
+      );
+    case 'chart-up':
+      return (
+        <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" />
+        </svg>
+      );
+    case 'chart-down':
+      return (
+        <svg className={cls} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.25 6L9 12.75l4.286-4.286a11.948 11.948 0 014.306 6.43l.776 2.898m0 0l3.182-5.511m-3.182 5.51l-5.511-3.181" />
         </svg>
       );
     default:
