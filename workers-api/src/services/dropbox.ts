@@ -88,11 +88,14 @@ export async function saveDropboxTokens(
 export async function getDropboxAccessToken(
   kv: KVNamespace,
   appKey: string,
-  appSecret: string
+  appSecret: string,
+  forceRefresh = false
 ): Promise<string | null> {
-  // 캐시된 access_token 확인
-  const cached = await kv.get("dropbox_access_token");
-  if (cached) return cached;
+  // 강제 갱신이 아니면 캐시된 access_token 확인
+  if (!forceRefresh) {
+    const cached = await kv.get("dropbox_access_token");
+    if (cached) return cached;
+  }
 
   // refresh_token으로 갱신
   const refreshToken = await kv.get("dropbox_refresh_token");
@@ -101,10 +104,12 @@ export async function getDropboxAccessToken(
   try {
     const result = await refreshDropboxToken(refreshToken, appKey, appSecret);
     await kv.put("dropbox_access_token", result.access_token, {
-      expirationTtl: result.expires_in - 60,
+      expirationTtl: result.expires_in - 300,
     });
+    console.log("[Dropbox] Token refreshed successfully");
     return result.access_token;
-  } catch {
+  } catch (e: any) {
+    console.error("[Dropbox] Token refresh failed:", e.message);
     return null;
   }
 }

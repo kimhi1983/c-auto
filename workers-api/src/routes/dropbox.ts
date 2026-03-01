@@ -47,6 +47,19 @@ dropboxRouter.get("/status", async (c) => {
 });
 
 /**
+ * GET /dropbox/reauth - 재인증 (임시 공개) — Dropbox OAuth 바로 리다이렉트
+ */
+dropboxRouter.get("/reauth", async (c) => {
+  if (!isDropboxConfigured(c.env)) {
+    return c.text("Dropbox App Key/Secret이 설정되지 않았습니다.", 400);
+  }
+  const baseUrl = new URL(c.req.url).origin;
+  const redirectUri = `${baseUrl}/api/v1/dropbox/callback`;
+  const authUrl = getDropboxAuthUrl(c.env.DROPBOX_APP_KEY!, redirectUri);
+  return c.redirect(authUrl);
+});
+
+/**
  * GET /dropbox/auth-url - OAuth 인증 URL 생성
  */
 dropboxRouter.get("/auth-url", authMiddleware, async (c) => {

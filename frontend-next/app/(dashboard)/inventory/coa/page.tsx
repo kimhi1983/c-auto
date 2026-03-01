@@ -623,10 +623,20 @@ export default function CoaPage() {
                           </div>
                         )}
                       </div>
-                    ) : result.aiError ? (
-                      <p className="text-xs text-red-500 mt-1">AI 분석 실패: {result.aiError}</p>
                     ) : (
-                      <p className="text-xs text-slate-400 mt-1">파일명 기반으로 저장됨 (AI 분석 불가)</p>
+                      <div>
+                        <p className="text-xs text-slate-400 mt-1">
+                          {result.aiError ? `AI 분석 실패: ${result.aiError}` : '파일명 기반으로 저장됨 (AI 분석 불가)'}
+                        </p>
+                        {(result.aiExtracted?.debug || result.aiError) && (
+                          <details className="text-[10px] text-slate-400 mt-1">
+                            <summary className="cursor-pointer hover:text-slate-600">AI 디버그 정보</summary>
+                            <p className="mt-1 bg-slate-50 rounded px-2 py-1 font-mono break-all">
+                              {result.aiExtracted?.debug || result.aiError}
+                            </p>
+                          </details>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

@@ -15,14 +15,14 @@ import {
   createDropboxFolder,
   deleteDropboxFile,
 } from "../services/dropbox";
-import { analyzeCoaDocument } from "../services/ai";
+import { analyzeCoaDocument, extractPdfText } from "../services/ai";
 import type { Env, UserContext } from "../types";
 
 const coaDocs = new Hono<{ Bindings: Env; Variables: { user: UserContext } }>();
 
 // 진단 엔드포인트는 인증 없이 접근 가능 (나머지는 인증 필요)
 coaDocs.use("*", async (c, next) => {
-  if (c.req.path.endsWith("/test-ai")) return next();
+  if (c.req.path.endsWith("/test-ai") || c.req.path.endsWith("/test-pdf")) return next();
   return authMiddleware(c, next);
 });
 
@@ -245,8 +245,8 @@ coaDocs.post("/auto-upload", async (c) => {
   console.log(`[CoA Upload] Starting auto-upload: ${body.fileName} (${body.contentType}, base64 ${Math.round(body.contentBase64.length / 1024)}KB)`);
 
   // 1) AI 분석 — 실패해도 업로드는 계속 진행
-  let aiExtracted = null;
-  let aiError = null;
+  let aiExtracted: any = null;
+  let aiError: string | null = null;
   try {
     aiExtracted = await analyzeCoaDocument(
       c.env,
@@ -256,8 +256,14 @@ coaDocs.post("/auto-upload", async (c) => {
     );
     console.log(`[CoA Upload] AI result for ${body.fileName}:`, JSON.stringify(aiExtracted));
   } catch (e: any) {
-    aiError = e.message || "AI 분석 실패";
-    console.error("[CoA Upload] AI analysis error:", e);
+    const errMsg = e?.message || String(e) || "AI 분석 실패";
+    aiError = errMsg.slice(0, 500);
+    console.error("[CoA Upload] AI analysis error:", errMsg);
+  }
+
+  // AI 응답의 confidence가 누락/NaN이면 보정
+  if (aiExtracted && (typeof aiExtracted.confidence !== "number" || isNaN(aiExtracted.confidence))) {
+    aiExtracted.confidence = 5;
   }
 
   // AI 결과 또는 파일명 기반 폴백
@@ -268,70 +274,100 @@ coaDocs.post("/auto-upload", async (c) => {
   const manufacturer = aiExtracted?.manufacturer || null;
 
   // 2) base64 → Uint8Array
-  const binStr = atob(body.contentBase64);
-  const bytes = new Uint8Array(binStr.length);
-  for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-
-  // 3) Dropbox 업로드 (제품명 폴더)
-  const accessToken = await getDropboxAccessToken(
-    c.env.CACHE!,
-    c.env.DROPBOX_APP_KEY!,
-    c.env.DROPBOX_APP_SECRET!,
-  );
-  if (!accessToken) {
-    return c.json({ error: "Dropbox 인증이 필요합니다" }, 503);
+  let binStr: string;
+  let bytes: Uint8Array;
+  try {
+    binStr = atob(body.contentBase64);
+    bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+  } catch (e: any) {
+    console.error("[CoA Upload] base64 decode error:", e.message);
+    return c.json({ error: `base64 디코딩 실패: ${e.message}` }, 400);
   }
 
-  const now = new Date();
-  const timestamp = now.toISOString().replace(/[:.]/g, "").slice(0, 15);
-  const storedName = `${timestamp}_${body.fileName}`;
-  const folderName = productName.replace(/[\\/:*?"<>|®™]/g, "_").replace(/_+/g, "_");
-  const folderPath = `/AI업무폴더/B.성적서대응/${folderName}`;
+  // 3) Dropbox 업로드 (제품명 폴더) — 토큰 만료 시 자동 재시도
+  let dropboxPath: string;
+  let storedName: string;
+  try {
+    let accessToken = await getDropboxAccessToken(
+      c.env.CACHE!,
+      c.env.DROPBOX_APP_KEY!,
+      c.env.DROPBOX_APP_SECRET!,
+    );
+    if (!accessToken) {
+      return c.json({ error: "Dropbox 인증이 필요합니다" }, 503);
+    }
 
-  try { await createDropboxFolder(accessToken, folderPath); } catch { /* 이미 존재 */ }
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, "").slice(0, 15);
+    storedName = `${timestamp}_${body.fileName}`;
+    const folderName = productName.replace(/[\\/:*?"<>|®™]/g, "_").replace(/_+/g, "_");
+    const folderPath = `/AI업무폴더/B.성적서대응/${folderName}`;
 
-  const result = await uploadDropboxFile(
-    accessToken,
-    `${folderPath}/${storedName}`,
-    bytes,
-  );
+    try { await createDropboxFolder(accessToken, folderPath); } catch { /* 이미 존재 */ }
+
+    try {
+      const result = await uploadDropboxFile(accessToken, `${folderPath}/${storedName}`, bytes);
+      dropboxPath = result.path;
+    } catch (uploadErr: any) {
+      if (uploadErr.message?.includes("expired_access_token")) {
+        console.log("[CoA Upload] Token expired → force refresh");
+        accessToken = await getDropboxAccessToken(c.env.CACHE!, c.env.DROPBOX_APP_KEY!, c.env.DROPBOX_APP_SECRET!, true);
+        if (!accessToken) return c.json({ error: "Dropbox 토큰 갱신 실패" }, 503);
+        try { await createDropboxFolder(accessToken, folderPath); } catch { /* 이미 존재 */ }
+        const result = await uploadDropboxFile(accessToken, `${folderPath}/${storedName}`, bytes);
+        dropboxPath = result.path;
+      } else {
+        throw uploadErr;
+      }
+    }
+    console.log(`[CoA Upload] Dropbox OK: ${dropboxPath}`);
+  } catch (e: any) {
+    console.error("[CoA Upload] Dropbox error:", e.message);
+    return c.json({ error: `Dropbox 업로드 실패: ${e.message?.slice(0, 200)}` }, 500);
+  }
 
   // 4) D1 저장 (제조사는 note에 포함)
-  const noteText = manufacturer ? `제조사: ${manufacturer}` : null;
-  const db = drizzle(c.env.DB);
-  const [doc] = await db
-    .insert(coaDocuments)
-    .values({
-      fileName: storedName,
-      originalName: body.fileName,
-      fileSize: bytes.length,
-      contentType: body.contentType || null,
-      dropboxPath: result.path,
-      note: noteText,
-      tags: null,
-      uploadedBy: user.userId,
-      uploadedByName: user.email,
-      productName,
-      lotNo,
-      manuDate,
-      validDate,
-    })
-    .returning();
+  try {
+    const noteText = manufacturer ? `제조사: ${manufacturer}` : null;
+    const db = drizzle(c.env.DB);
+    const [doc] = await db
+      .insert(coaDocuments)
+      .values({
+        fileName: storedName,
+        originalName: body.fileName,
+        fileSize: bytes.length,
+        contentType: body.contentType || null,
+        dropboxPath,
+        note: noteText,
+        tags: null,
+        uploadedBy: user.userId,
+        uploadedByName: user.email,
+        productName,
+        lotNo,
+        manuDate,
+        validDate,
+      })
+      .returning();
 
-  return c.json({
-    status: "success",
-    data: doc,
-    aiExtracted: aiExtracted ? {
-      productName: aiExtracted.productName,
-      lotNo: aiExtracted.lotNo,
-      manuDate: aiExtracted.manuDate,
-      validDate: aiExtracted.validDate,
-      manufacturer: aiExtracted.manufacturer,
-      confidence: aiExtracted.confidence,
-      debug: aiExtracted.rawResponse || null,
-    } : null,
-    aiError: aiError || null,
-  }, 201);
+    return c.json({
+      status: "success",
+      data: doc,
+      aiExtracted: aiExtracted ? {
+        productName: aiExtracted.productName,
+        lotNo: aiExtracted.lotNo,
+        manuDate: aiExtracted.manuDate,
+        validDate: aiExtracted.validDate,
+        manufacturer: aiExtracted.manufacturer,
+        confidence: aiExtracted.confidence,
+        debug: aiExtracted.rawResponse || null,
+      } : null,
+      aiError: aiError || null,
+    }, 201);
+  } catch (e: any) {
+    console.error("[CoA Upload] D1 insert error:", e.message);
+    return c.json({ error: `DB 저장 실패: ${e.message?.slice(0, 200)}` }, 500);
+  }
 });
 
 /**
@@ -570,7 +606,63 @@ coaDocs.get("/test-ai", async (c) => {
     results.mistralError = e.message?.slice(0, 200);
   }
 
+  // 5) PDF 텍스트 추출 테스트 (순수 JS 파서 - 가벼운 테스트만)
+  results.pdfParserNote = "PDF text extraction uses pure JS parser (no external deps). Test by uploading a real CoA PDF via /auto-upload.";
+
   return c.json({ status: "success", diagnostics: results });
+});
+
+/**
+ * POST /test-pdf - PDF 텍스트 추출 + Workers AI 테스트 (인증 불필요)
+ * body: { base64: string, fileName?: string }
+ */
+coaDocs.post("/test-pdf", async (c) => {
+  const body = await c.req.json<{ base64: string; fileName?: string }>();
+  if (!body.base64) return c.json({ error: "base64 required" }, 400);
+
+  const results: Record<string, unknown> = {};
+
+  // 1) PDF 텍스트 추출
+  try {
+    const text = await extractPdfText(body.base64);
+    results.extractedLength = text?.length || 0;
+    results.extractedPreview = text?.slice(0, 500) || "(empty)";
+  } catch (e: any) {
+    results.extractError = e.message;
+  }
+
+  // 2) Workers AI 텍스트 분석
+  if (results.extractedLength && (results.extractedLength as number) > 0) {
+    try {
+      const text = results.extractedPreview as string;
+      const response = await c.env.AI.run("@cf/meta/llama-3.1-70b-instruct" as any, {
+        messages: [
+          { role: "system", content: "You are a document analyzer. Return only JSON." },
+          { role: "user", content: `Extract from this CoA text: ${text.slice(0, 300)}\n\nReturn JSON: {"productName":"...","lotNo":"...","manuDate":"YYYY-MM-DD","validDate":"YYYY-MM-DD"}` },
+        ],
+        max_tokens: 512,
+        temperature: 0.1,
+      });
+      results.workersAIResponse = (response as any).response || "(empty)";
+    } catch (e: any) {
+      results.workersAIError = e.message;
+    }
+  }
+
+  // 3) 전체 analyzeCoaDocument 테스트
+  try {
+    const full = await analyzeCoaDocument(
+      c.env,
+      body.fileName || "test.pdf",
+      "application/pdf",
+      body.base64,
+    );
+    results.fullResult = full;
+  } catch (e: any) {
+    results.fullError = e.message;
+  }
+
+  return c.json(results);
 });
 
 export default coaDocs;

@@ -15,7 +15,8 @@
  */
 
 import type { Env } from "../types";
-
+import pako from "pako";
+import { getDocumentProxy, extractText } from "unpdf";
 // ─── Model IDs ───
 
 const GEMINI_MODEL = "gemini-2.0-flash";
@@ -892,8 +893,375 @@ confidence: 0-100
 }
 
 /**
+ * Hex 문자열 디코딩 — single-byte 및 UTF-16BE 자동 감지
+ */
+function decodeHexString(hex: string): string {
+  if (!hex || hex.length < 2) return "";
+
+  // UTF-16BE 감지: 4의 배수 길이 + 대부분 00XX 패턴 (Latin 텍스트)
+  if (hex.length >= 4 && hex.length % 4 === 0) {
+    let utf16 = "";
+    let isValid = true;
+    for (let i = 0; i < hex.length; i += 4) {
+      const code = parseInt(hex.slice(i, i + 4), 16);
+      if (isNaN(code) || code === 0) { isValid = false; break; }
+      utf16 += String.fromCharCode(code);
+    }
+    // UTF-16BE로 디코딩된 결과에 출력 가능 문자가 대부분이면 채택
+    if (isValid && utf16.length > 0) {
+      const printable = utf16.replace(/[^\x20-\x7E\u00A0-\uFFFF]/g, "");
+      if (printable.length >= utf16.length * 0.5) return utf16;
+    }
+  }
+
+  // Single-byte 폴백
+  let result = "";
+  for (let i = 0; i < hex.length; i += 2) {
+    const code = parseInt(hex.slice(i, i + 2), 16);
+    if (!isNaN(code) && code > 31) result += String.fromCharCode(code);
+  }
+  return result;
+}
+
+/**
+ * BT...ET 블록에서 Tj/TJ 텍스트 연산자 추출 (공통 헬퍼)
+ * (text) Tj, <hex> Tj, [(text) <hex> number] TJ 모두 지원
+ */
+function extractTextOperators(content: string, textParts: string[]): void {
+  const btBlocks = content.match(/BT[\s\S]*?ET/g);
+  if (!btBlocks) return;
+
+  for (const block of btBlocks) {
+    // 1) Paren Tj: (text) Tj
+    const tjParenMatches = block.match(/\(([^)]*)\)\s*Tj/g);
+    if (tjParenMatches) {
+      for (const tj of tjParenMatches) {
+        const text = tj.match(/\(([^)]*)\)/)?.[1];
+        if (text) textParts.push(decodePdfString(text));
+      }
+    }
+
+    // 2) Hex Tj: <hex> Tj
+    const tjHexMatches = block.match(/<([0-9A-Fa-f]+)>\s*Tj/g);
+    if (tjHexMatches) {
+      for (const h of tjHexMatches) {
+        const hex = h.match(/<([0-9A-Fa-f]+)>/)?.[1];
+        if (hex) {
+          const decoded = decodeHexString(hex);
+          if (decoded.trim()) textParts.push(decoded);
+        }
+      }
+    }
+
+    // 3) TJ 배열: [(text) <hex> number ...] TJ — 혼합 형식 지원
+    const tjArrays = block.match(/\[([^\]]*)\]\s*TJ/g);
+    if (tjArrays) {
+      for (const tja of tjArrays) {
+        const inner = tja.match(/\[([^\]]*)\]/)?.[1] || "";
+        // (text) 및 <hex> 엔트리 모두 매칭
+        const entries = inner.match(/\(([^)]*)\)|<([0-9A-Fa-f]+)>/g);
+        if (entries) {
+          const combined = entries.map(e => {
+            const parenMatch = e.match(/\(([^)]*)\)/);
+            if (parenMatch) return decodePdfString(parenMatch[1]);
+            const hexMatch = e.match(/<([0-9A-Fa-f]+)>/);
+            if (hexMatch) return decodeHexString(hexMatch[1]);
+            return "";
+          }).join("");
+          if (combined.trim()) textParts.push(combined);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * FlateDecode 스트림 압축 해제 — pako (순수 JS zlib) 사용
+ * CF Workers에서 DecompressionStream이 불안정 → pako로 대체
+ */
+function decompressFlateStream(compressedBytes: Uint8Array): string | null {
+  // 1) zlib (RFC 1950) — PDF FlateDecode 표준
+  try {
+    const decompressed = pako.inflate(compressedBytes);
+    return new TextDecoder("latin1").decode(decompressed);
+  } catch { /* zlib 실패 → raw deflate 시도 */ }
+
+  // 2) raw deflate (RFC 1951)
+  try {
+    const decompressed = pako.inflateRaw(compressedBytes);
+    return new TextDecoder("latin1").decode(decompressed);
+  } catch { /* 모두 실패 */ }
+
+  return null;
+}
+
+/**
+ * raw bytes 내에서 특정 바이트 시퀀스의 위치를 모두 찾는 헬퍼
+ */
+function findByteSequence(haystack: Uint8Array, needle: number[], startFrom = 0): number {
+  outer:
+  for (let i = startFrom; i <= haystack.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * PDF 텍스트 추출 — unpdf(PDF.js) 우선, 순수 JS 폴백
+ * unpdf: CID 폰트 + ToUnicode CMap 지원 → 정확한 텍스트 추출
+ * 순수 JS: 단순 폰트(Type1/TrueType) PDF에서 가벼운 추출
+ */
+export async function extractPdfText(base64Data: string): Promise<string | null> {
+  const b64 = base64Data.replace(/-/g, "+").replace(/_/g, "/");
+  const binaryStr = atob(b64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  // 1) unpdf(PDF.js) — CID 폰트, ToUnicode CMap 완벽 지원
+  try {
+    console.log(`[CoA PDF] unpdf: starting (${bytes.length} bytes)`);
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    const cleaned = text.replace(/\s+/g, " ").trim();
+    console.log(`[CoA PDF] unpdf: ${cleaned.length} chars | preview: ${cleaned.slice(0, 200)}`);
+
+    if (cleaned.length >= 10) {
+      return cleaned.slice(0, 15000);
+    }
+    console.log(`[CoA PDF] unpdf: too short (${cleaned.length}), trying JS fallback`);
+  } catch (e: any) {
+    console.error(`[CoA PDF] unpdf failed: ${e?.message || e}`);
+  }
+
+  // 2) 순수 JS 폴백 — 바이트 직접 파싱 (단순 폰트 PDF용)
+  try {
+    return extractPdfTextPureJs(bytes);
+  } catch (e: any) {
+    console.error(`[CoA PDF] JS fallback failed: ${e?.message || e}`);
+    return null;
+  }
+}
+
+/** 순수 JS PDF 텍스트 추출 (단순 폰트용 폴백) */
+function extractPdfTextPureJs(bytes: Uint8Array): string | null {
+  const textParts: string[] = [];
+  const STREAM_MARKER = [115, 116, 114, 101, 97, 109];
+  const ENDSTREAM = [101, 110, 100, 115, 116, 114, 101, 97, 109];
+
+  let searchFrom = 0;
+  while (searchFrom < bytes.length) {
+    const streamKeyPos = findByteSequence(bytes, STREAM_MARKER, searchFrom);
+    if (streamKeyPos === -1) break;
+
+    let bodyStart = streamKeyPos + 6;
+    if (bodyStart >= bytes.length) break;
+    if (bytes[bodyStart] === 13 && bodyStart + 1 < bytes.length && bytes[bodyStart + 1] === 10) {
+      bodyStart += 2;
+    } else if (bytes[bodyStart] === 10) {
+      bodyStart += 1;
+    } else {
+      searchFrom = streamKeyPos + 6;
+      continue;
+    }
+
+    const dictStart = Math.max(0, streamKeyPos - 500);
+    const dictStr = new TextDecoder("latin1").decode(bytes.slice(dictStart, streamKeyPos));
+    const isFlateDecode = dictStr.includes("FlateDecode");
+
+    let streamLength = -1;
+    const lengthMatch = dictStr.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/);
+    if (lengthMatch) streamLength = parseInt(lengthMatch[1], 10);
+
+    let streamBytes: Uint8Array;
+    let bodyEnd: number;
+
+    if (streamLength > 0 && bodyStart + streamLength <= bytes.length) {
+      streamBytes = bytes.slice(bodyStart, bodyStart + streamLength);
+      bodyEnd = bodyStart + streamLength;
+    } else {
+      const endPos = findByteSequence(bytes, ENDSTREAM, bodyStart);
+      if (endPos === -1) { searchFrom = bodyStart; continue; }
+      bodyEnd = endPos;
+      if (bodyEnd > bodyStart && bytes[bodyEnd - 1] === 10) bodyEnd--;
+      if (bodyEnd > bodyStart && bytes[bodyEnd - 1] === 13) bodyEnd--;
+      streamBytes = bytes.slice(bodyStart, bodyEnd);
+      bodyEnd = endPos + 9;
+    }
+
+    searchFrom = bodyEnd > bodyStart ? bodyEnd : bodyStart + 1;
+
+    if (isFlateDecode) {
+      const decompressed = decompressFlateStream(streamBytes);
+      if (decompressed) extractTextOperators(decompressed, textParts);
+    } else {
+      extractTextOperators(new TextDecoder("latin1").decode(streamBytes), textParts);
+    }
+  }
+
+  if (textParts.length === 0) {
+    extractTextOperators(new TextDecoder("latin1").decode(bytes), textParts);
+  }
+
+  const result = textParts.map(t => t.trim()).filter(t => t.length > 0).join(" ").replace(/\s+/g, " ").trim();
+  if (result.length < 10) return null;
+  return result.slice(0, 15000);
+}
+
+/**
+ * 스캔 PDF에서 JPEG 이미지를 직접 검색 (가벼운 방식)
+ * PDF 바이너리에서 JPEG 시그니처(FF D8 FF)를 찾아 가장 큰 JPEG 블록을 추출
+ * unpdf extractImages는 메모리 초과 위험 → 바이트 스캔 방식 사용
+ */
+export function extractPdfImage(base64Data: string): string | null {
+  try {
+    const b64 = base64Data.replace(/-/g, "+").replace(/_/g, "/");
+    const binaryStr = atob(b64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+
+    // JPEG 시그니처 (FF D8 FF) 와 종료 마커 (FF D9) 검색
+    let largestJpeg: Uint8Array | null = null;
+    let searchFrom = 0;
+
+    while (searchFrom < bytes.length - 3) {
+      // JPEG SOI 마커 찾기: FF D8 FF
+      let jpegStart = -1;
+      for (let i = searchFrom; i < bytes.length - 2; i++) {
+        if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8 && bytes[i + 2] === 0xFF) {
+          jpegStart = i;
+          break;
+        }
+      }
+      if (jpegStart === -1) break;
+
+      // JPEG EOI 마커 찾기: FF D9
+      let jpegEnd = -1;
+      for (let i = jpegStart + 3; i < bytes.length - 1; i++) {
+        if (bytes[i] === 0xFF && bytes[i + 1] === 0xD9) {
+          jpegEnd = i + 2; // FF D9 포함
+          break;
+        }
+      }
+
+      if (jpegEnd === -1) {
+        searchFrom = jpegStart + 3;
+        continue;
+      }
+
+      const jpegBytes = bytes.slice(jpegStart, jpegEnd);
+      searchFrom = jpegEnd;
+
+      // 5KB 이상인 JPEG만 (썸네일 제외)
+      if (jpegBytes.length > 5000) {
+        if (!largestJpeg || jpegBytes.length > largestJpeg.length) {
+          largestJpeg = jpegBytes;
+        }
+      }
+    }
+
+    if (largestJpeg) {
+      let binary = "";
+      // 큰 이미지는 청크 단위로 변환 (call stack 초과 방지)
+      const chunk = 8192;
+      for (let i = 0; i < largestJpeg.length; i += chunk) {
+        const slice = largestJpeg.subarray(i, Math.min(i + chunk, largestJpeg.length));
+        binary += String.fromCharCode(...slice);
+      }
+      const result = btoa(binary);
+      console.log(`[CoA PDF] Found JPEG: ${largestJpeg.length} bytes (${Math.round(result.length / 1024)}KB b64)`);
+      return result;
+    }
+
+    console.log(`[CoA PDF] No JPEG found in PDF binary`);
+    return null;
+  } catch (e: any) {
+    console.error(`[CoA PDF] extractPdfImage failed: ${e?.message}`);
+    return null;
+  }
+}
+
+/** PDF 문자열 이스케이프 해제 */
+function decodePdfString(s: string): string {
+  return s
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\\(/g, "(")
+    .replace(/\\\)/g, ")")
+    .replace(/\\\\/g, "\\")
+    .replace(/\\(\d{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+}
+
+// hexToText는 decodeHexString으로 통합됨
+
+/**
+ * CoA 텍스트 기반 분석 프롬프트 (unpdf 추출 텍스트용)
+ */
+function buildCoaTextPrompt(fileName: string, extractedText: string): string {
+  return `Analyze the extracted text from a Certificate of Analysis (CoA) document.
+
+File name: ${fileName}
+
+EXTRACTED DOCUMENT TEXT:
+---
+${extractedText}
+---
+
+The text above was extracted from a PDF. Table layouts may be collapsed and formatting imperfect. Parse carefully.
+
+Return ONLY this JSON (no markdown, no code blocks, no extra text):
+{
+  "productName": "Full product/material name including trade name",
+  "lotNo": "Lot or Batch number",
+  "manuDate": "Manufacturing date in YYYY-MM-DD",
+  "validDate": "Expiry/Best Before/Retest date in YYYY-MM-DD",
+  "manufacturer": "Manufacturer or supplier company name",
+  "confidence": 85
+}
+
+EXTRACTION GUIDE:
+
+productName (FULL commercial name including ® or ™):
+  - "Product Name", "Product", "Material Description", "Material Name"
+  - "Trade Name", "Commercial Name", "Product Description"
+  - "Item", "Article", "Description", "품명", "제품명", "원료명"
+  - Use the complete trade/brand name, e.g., "PUROLAN® IHD" not just "IHD"
+
+lotNo:
+  - "Lot No", "Lot Number", "Lot #", "Batch", "Batch No", "Batch Number"
+  - "Charge", "Lot/Batch", "LOT", "B/N", "로트번호", "배치번호"
+
+manuDate (convert to YYYY-MM-DD):
+  - "Manufacturing Date", "MFG Date", "Date of Manufacture", "Production Date"
+  - "MFG", "Mfg. Date", "Date of Production", "제조일", "제조일자"
+
+validDate (convert to YYYY-MM-DD):
+  - "Expiry Date", "Expiration Date", "Best Before", "Best Before Date"
+  - "Retest Date", "Valid Until", "Shelf Life", "Use By", "EXP"
+  - "유효기한", "사용기한", "유효일자"
+
+manufacturer:
+  - "Manufacturer", "Produced by", "Made by", "Supplier", "Company"
+  - Often in the document header area
+  - "제조사", "공급사", "제조원"
+
+confidence: 0-100
+  - 90+: All key fields clearly found in text
+  - 70-89: Most fields found; some uncertain due to text extraction artifacts
+  - 50-69: Only partial extraction possible
+  - Below 50: Very uncertain`;
+}
+
+/**
  * 성적서(CoA) 문서 AI 분석 — 제품명, LOT, 제조일, 유효기한, 제조사 자동 추출
- * 시도 순서: Gemini 멀티모달 → Claude 멀티모달 → Workers AI Vision → 파일명 regex 폴백
+ * 시도 순서: unpdf텍스트+Gemini → Gemini멀티모달 → Claude멀티모달 → Workers AI Vision → 파일명 regex
  */
 export async function analyzeCoaDocument(
   env: Env,
@@ -911,14 +1279,98 @@ export async function analyzeCoaDocument(
     ct.includes("gif") ? "image/gif" : "image/webp";
   const b64Size = Math.round(base64Data.length / 1024);
 
-  // 1) Gemini 멀티모달로 PDF/이미지 분석
+  // 1) [PRIMARY] unpdf 텍스트 추출 → Gemini Flash 텍스트 분석 (리전 차단 없음)
   const hasGemini = !!env.GEMINI_API_KEY;
-  debugInfo.push(`gemini=${hasGemini}, ct=${ct}, typeMatch=${typeMatch}`);
+  const isPdf = ct.includes("pdf");
+  debugInfo.push(`gemini=${hasGemini}, ct=${ct}, typeMatch=${typeMatch}, isPdf=${isPdf}`);
 
+  // 1-a) PDF 텍스트 추출 시도
+  let extractedPdfText: string | null = null;
+  if (isPdf) {
+    try {
+      debugInfo.push(`unpdf: extracting text`);
+      extractedPdfText = await extractPdfText(base64Data);
+      if (extractedPdfText) {
+        debugInfo.push(`unpdf: ${extractedPdfText.length} chars`);
+        debugInfo.push(`text: [${extractedPdfText.slice(0, 200)}]`);
+      } else {
+        debugInfo.push(`unpdf: no text (scanned PDF)`);
+      }
+    } catch (e: any) {
+      debugInfo.push(`unpdf-extract error=${(e?.message || "").slice(0, 80)}`);
+    }
+  }
+
+  // 1-b) 추출 텍스트 + Gemini Flash 텍스트 분석
+  if (extractedPdfText && hasGemini) {
+    try {
+      console.log(`[CoA AI] unpdf OK → Gemini text: ${extractedPdfText.length} chars`);
+      const raw = await callGemini(
+        env.GEMINI_API_KEY!,
+        buildCoaTextPrompt(fileName, extractedPdfText),
+        COA_ANALYSIS_SYSTEM,
+        2048
+      );
+
+      debugInfo.push(`unpdf+gemini raw=${raw.slice(0, 150)}`);
+      const parsed = parseCoaJson(raw);
+      if (parsed) {
+        debugInfo.push(`unpdf+gemini parsed=OK`);
+        return {
+          productName: parsed.productName || null,
+          lotNo: parsed.lotNo || null,
+          manuDate: normalizeDate(parsed.manuDate),
+          validDate: normalizeDate(parsed.validDate),
+          manufacturer: parsed.manufacturer || null,
+          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 75,
+          rawResponse: debugInfo.join(" | "),
+        };
+      }
+      debugInfo.push(`unpdf+gemini parsed=FAIL`);
+    } catch (e: any) {
+      debugInfo.push(`unpdf+gemini error=${(e?.message || "").slice(0, 150)}`);
+      console.error(`[CoA AI] unpdf+Gemini failed:`, e?.message);
+    }
+  }
+
+  // 1-c) 추출 텍스트 + Workers AI (Llama) 폴백 — Gemini 리전 차단 시 사용
+  if (extractedPdfText && env.AI) {
+    try {
+      debugInfo.push(`unpdf+workersAI: text analysis`);
+      console.log(`[CoA AI] unpdf OK → Workers AI text: ${extractedPdfText.length} chars`);
+      const raw = await callWorkersAI(
+        env.AI,
+        buildCoaTextPrompt(fileName, extractedPdfText),
+        COA_ANALYSIS_SYSTEM,
+        2048
+      );
+
+      debugInfo.push(`unpdf+workersAI raw=${raw.slice(0, 150)}`);
+      const parsed = parseCoaJson(raw);
+      if (parsed) {
+        debugInfo.push(`unpdf+workersAI parsed=OK`);
+        return {
+          productName: parsed.productName || null,
+          lotNo: parsed.lotNo || null,
+          manuDate: normalizeDate(parsed.manuDate),
+          validDate: normalizeDate(parsed.validDate),
+          manufacturer: parsed.manufacturer || null,
+          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 60,
+          rawResponse: debugInfo.join(" | "),
+        };
+      }
+      debugInfo.push(`unpdf+workersAI parsed=FAIL`);
+    } catch (e: any) {
+      debugInfo.push(`unpdf+workersAI error=${(e?.message || "").slice(0, 150)}`);
+      console.error(`[CoA AI] unpdf+WorkersAI failed:`, e?.message);
+    }
+  }
+
+  // 2) Gemini 멀티모달 폴백 (스캔 PDF/이미지용)
   if (hasGemini && typeMatch) {
     try {
-      debugInfo.push(`gemini: ${mimeType}, ${b64Size}KB`);
-      console.log(`[CoA AI] Gemini analyzing: ${fileName} (${mimeType}, ${b64Size}KB)`);
+      debugInfo.push(`gemini-multimodal: ${mimeType}, ${b64Size}KB`);
+      console.log(`[CoA AI] Gemini multimodal: ${fileName} (${mimeType}, ${b64Size}KB)`);
 
       const raw = await callGeminiMultimodal(
         env.GEMINI_API_KEY!,
@@ -929,12 +1381,12 @@ export async function analyzeCoaDocument(
         2048
       );
 
-      debugInfo.push(`gemini raw=${raw.slice(0, 150)}`);
-      console.log(`[CoA AI] Gemini response for ${fileName}:`, raw.slice(0, 500));
+      debugInfo.push(`gemini-multimodal raw=${raw.slice(0, 150)}`);
+      console.log(`[CoA AI] Gemini multimodal response for ${fileName}:`, raw.slice(0, 500));
 
       const parsed = parseCoaJson(raw);
       if (parsed) {
-        debugInfo.push(`gemini parsed=OK`);
+        debugInfo.push(`gemini-multimodal parsed=OK`);
         return {
           productName: parsed.productName || null,
           lotNo: parsed.lotNo || null,
@@ -946,16 +1398,16 @@ export async function analyzeCoaDocument(
         };
       }
 
-      debugInfo.push(`gemini parsed=FAIL`);
-      console.warn(`[CoA AI] Gemini JSON parse failed for ${fileName}`);
+      debugInfo.push(`gemini-multimodal parsed=FAIL`);
+      console.warn(`[CoA AI] Gemini multimodal JSON parse failed for ${fileName}`);
     } catch (e: any) {
       const errMsg = e?.message || String(e);
-      debugInfo.push(`gemini error=${errMsg.slice(0, 150)}`);
-      console.error(`[CoA AI] Gemini failed for ${fileName}:`, errMsg);
+      debugInfo.push(`gemini-multimodal error=${errMsg.slice(0, 150)}`);
+      console.error(`[CoA AI] Gemini multimodal failed for ${fileName}:`, errMsg);
     }
   }
 
-  // 2) Claude 멀티모달 폴백 (Gemini 리전 차단 우회)
+  // 3) Claude 멀티모달 폴백 (Gemini 리전 차단 우회)
   const hasClaude = !!env.ANTHROPIC_API_KEY;
   debugInfo.push(`claude=${hasClaude}`);
 
@@ -999,49 +1451,92 @@ export async function analyzeCoaDocument(
     }
   }
 
-  // 3) Workers AI Vision 폴백 (이미지만 — PDF 미지원)
-  const isImage = !ct.includes("pdf") && typeMatch;
-  debugInfo.push(`workersAI=true, isImage=${isImage}`);
+  // 4) Workers AI Vision — 이미지 직접 분석 또는 스캔 PDF에서 JPEG 추출 후 분석
+  if (env.AI) {
+    let visionBase64: string | null = null;
+    let visionSource = "";
 
-  if (isImage) {
-    try {
-      debugInfo.push(`workersAI: ${mimeType}, ${b64Size}KB`);
-      console.log(`[CoA AI] Workers AI Vision analyzing: ${fileName} (${mimeType}, ${b64Size}KB)`);
+    if (!ct.includes("pdf") && typeMatch) {
+      // 이미지 파일 → 직접 사용
+      visionBase64 = base64Data;
+      visionSource = "direct-image";
+    } else if (isPdf && !extractedPdfText) {
+      // 스캔 PDF (텍스트 없음) → unpdf로 이미지 추출
+      debugInfo.push(`pdf-image: extracting`);
+      visionBase64 = extractPdfImage(base64Data);
+      visionSource = visionBase64 ? "pdf-image" : "none";
+      debugInfo.push(`pdf-image: ${visionSource} (${visionBase64 ? Math.round(visionBase64.length / 1024) + "KB" : "not found"})`);
+    }
 
-      const raw = await callWorkersAIVision(
-        env.AI,
-        `${COA_ANALYSIS_SYSTEM}\n\n${buildCoaAnalysisPrompt(fileName)}`,
-        base64Data,
-        2048
-      );
+    if (visionBase64) {
+      try {
+        debugInfo.push(`vision-ocr: ${visionSource}`);
+        console.log(`[CoA AI] Workers AI Vision (${visionSource}): ${fileName}`);
 
-      debugInfo.push(`workersAI raw=${raw.slice(0, 150)}`);
-      console.log(`[CoA AI] Workers AI response for ${fileName}:`, raw.slice(0, 500));
+        // Vision으로 OCR + 구조화 추출
+        const ocrPrompt = `Read ALL text visible in this Certificate of Analysis (CoA) image. Then extract and return ONLY this JSON:
+{"productName":"full product name","lotNo":"lot/batch number","manuDate":"YYYY-MM-DD","validDate":"YYYY-MM-DD","manufacturer":"company name","confidence":85}
+Look for: Product Name, Lot/Batch No, Manufacturing Date, Expiry/Retest Date, Manufacturer name in header/footer.`;
 
-      const parsed = parseCoaJson(raw);
-      if (parsed) {
-        debugInfo.push(`workersAI parsed=OK`);
-        return {
-          productName: parsed.productName || null,
-          lotNo: parsed.lotNo || null,
-          manuDate: normalizeDate(parsed.manuDate),
-          validDate: normalizeDate(parsed.validDate),
-          manufacturer: parsed.manufacturer || null,
-          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 50,
-          rawResponse: debugInfo.join(" | "),
-        };
+        const raw = await callWorkersAIVision(
+          env.AI,
+          ocrPrompt,
+          visionBase64,
+          2048
+        );
+
+        debugInfo.push(`vision-ocr raw=${raw.slice(0, 150)}`);
+        console.log(`[CoA AI] Vision OCR response for ${fileName}:`, raw.slice(0, 500));
+
+        const parsed = parseCoaJson(raw);
+        if (parsed) {
+          debugInfo.push(`vision-ocr parsed=OK`);
+          return {
+            productName: parsed.productName || null,
+            lotNo: parsed.lotNo || null,
+            manuDate: normalizeDate(parsed.manuDate),
+            validDate: normalizeDate(parsed.validDate),
+            manufacturer: parsed.manufacturer || null,
+            confidence: typeof parsed.confidence === "number" ? parsed.confidence : 45,
+            rawResponse: debugInfo.join(" | "),
+          };
+        }
+
+        // Vision이 JSON 반환 실패 → OCR 텍스트로 취급하여 텍스트 분석 시도
+        if (raw.length > 20) {
+          debugInfo.push(`vision-ocr: JSON fail, trying text analysis`);
+          try {
+            const textRaw = await callWorkersAI(
+              env.AI,
+              buildCoaTextPrompt(fileName, raw),
+              COA_ANALYSIS_SYSTEM,
+              2048
+            );
+            const textParsed = parseCoaJson(textRaw);
+            if (textParsed) {
+              debugInfo.push(`vision→text parsed=OK`);
+              return {
+                productName: textParsed.productName || null,
+                lotNo: textParsed.lotNo || null,
+                manuDate: normalizeDate(textParsed.manuDate),
+                validDate: normalizeDate(textParsed.validDate),
+                manufacturer: textParsed.manufacturer || null,
+                confidence: typeof textParsed.confidence === "number" ? textParsed.confidence : 40,
+                rawResponse: debugInfo.join(" | "),
+              };
+            }
+          } catch { /* text analysis also failed */ }
+        }
+
+        debugInfo.push(`vision-ocr parsed=FAIL`);
+      } catch (e: any) {
+        debugInfo.push(`vision-ocr error=${(e?.message || "").slice(0, 150)}`);
+        console.error(`[CoA AI] Vision OCR failed:`, e?.message);
       }
-
-      debugInfo.push(`workersAI parsed=FAIL`);
-      console.warn(`[CoA AI] Workers AI JSON parse failed for ${fileName}`);
-    } catch (e: any) {
-      const errMsg = e?.message || String(e);
-      debugInfo.push(`workersAI error=${errMsg.slice(0, 150)}`);
-      console.error(`[CoA AI] Workers AI Vision failed for ${fileName}:`, errMsg);
     }
   }
 
-  // 4) 최종 폴백: 파일명 기반 regex 추출
+  // 5) 최종 폴백: 파일명 기반 regex 추출
   debugInfo.push(`fallback=filename`);
   console.log(`[CoA AI] Using filename fallback for: ${fileName}`);
   const result = extractFromFileName(fileName);
