@@ -19,6 +19,8 @@ import {
   savePurchase,
   saveCustomer,
   getAllCustomers,
+  resolveWarehouseCode,
+  getWarehouseList,
   type ProductItem,
   type CustomerItem,
 } from "../services/ecount";
@@ -479,7 +481,7 @@ erp.post("/sales", async (c) => {
     return c.json({ status: "error", message: "ERP 인증 정보가 설정되지 않았습니다" }, 400);
   }
 
-  const body = await c.req.json<{ items: Array<{ IO_DATE: string; CUST_CD: string; PROD_CD: string; QTY: string; PRICE: string; WH_CD?: string; REMARKS?: string }> }>();
+  const body = await c.req.json<{ items: Array<{ IO_DATE: string; CUST_CD: string; CUST_DES?: string; PROD_CD: string; QTY: string; PRICE: string; WH_CD?: string; REMARKS?: string }> }>();
 
   if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
     return c.json({ status: "error", message: "입력할 판매 항목이 없습니다" }, 400);
@@ -492,7 +494,47 @@ erp.post("/sales", async (c) => {
   }
 
   try {
-    const result = await saveSale(c.env, { SaleList: body.items });
+    // WH_CD 변환 (창고 이름 → 이카운트 5자리 코드)
+    const whRaw = body.items[0]?.WH_CD || '';
+    const whCode = await resolveWarehouseCode(c.env, whRaw);
+
+    // 이카운트 SaveSale BulkDatas — WH_CD 필수(STRING(5))
+    const saleList = body.items.map((item, idx) => ({
+      BulkDatas: {
+        UPLOAD_SER_NO: String(idx + 1),
+        IO_DATE: item.IO_DATE,
+        CUST: item.CUST_CD,
+        CUST_DES: item.CUST_DES || '',
+        PROD_CD: item.PROD_CD,
+        QTY: item.QTY,
+        PRICE: item.PRICE,
+        SUPPLY_AMT: String((parseFloat(item.QTY) || 0) * (parseFloat(item.PRICE) || 0)),
+        VAT_AMT: String(Math.round((parseFloat(item.QTY) || 0) * (parseFloat(item.PRICE) || 0) * 0.1)),
+        WH_CD: whCode || '00005',
+        ...(item.REMARKS ? { REMARKS: item.REMARKS } : {}),
+      },
+      Line: String(idx),
+    }));
+
+    console.log('[ERP] SaveSale 요청:', JSON.stringify({ SaleList: saleList }));
+    const result = await saveSale(c.env, { SaleList: saleList });
+    console.log('[ERP] SaveSale 응답:', JSON.stringify(result).slice(0, 1000));
+
+    // 이카운트 항목별 성공/실패 체크
+    const resultData = result?.Data;
+    if (resultData) {
+      const failCnt = resultData.FailCnt || 0;
+      const successCnt = resultData.SuccessCnt || 0;
+      const errors = resultData.Errors || resultData.Result?.filter((r: any) => r.IsError || r.Code !== '200') || [];
+      if (failCnt > 0 || (successCnt === 0 && errors.length > 0)) {
+        const errMsg = errors.map((e: any) => e.Message || e.Msg || JSON.stringify(e)).join('; ');
+        return c.json({
+          status: "error",
+          message: `이카운트 입력 실패 (성공:${successCnt}, 실패:${failCnt}): ${errMsg || '상세 정보 없음'}`,
+          data: result,
+        }, 400);
+      }
+    }
 
     // 워크플로우 자동 생성
     try {
@@ -515,7 +557,7 @@ erp.post("/sales", async (c) => {
     return c.json({
       status: "success",
       data: result,
-      message: `${body.items.length}건 판매 입력 완료`,
+      message: `${body.items.length}건 판매 입력 완료 (성공: ${resultData?.SuccessCnt || '?'})`,
     });
   } catch (e: any) {
     console.error("[ERP] SaveSale error:", e);
@@ -531,7 +573,7 @@ erp.post("/purchases", async (c) => {
     return c.json({ status: "error", message: "ERP 인증 정보가 설정되지 않았습니다" }, 400);
   }
 
-  const body = await c.req.json<{ items: Array<{ IO_DATE: string; CUST_CD: string; PROD_CD: string; QTY: string; PRICE: string; WH_CD?: string; REMARKS?: string }> }>();
+  const body = await c.req.json<{ items: Array<{ IO_DATE: string; CUST_CD: string; CUST_DES?: string; PROD_CD: string; QTY: string; PRICE: string; WH_CD?: string; REMARKS?: string }> }>();
 
   if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
     return c.json({ status: "error", message: "입력할 구매 항목이 없습니다" }, 400);
@@ -544,7 +586,47 @@ erp.post("/purchases", async (c) => {
   }
 
   try {
-    const result = await savePurchase(c.env, { PurchaseList: body.items });
+    // WH_CD 변환 (창고 이름 → 이카운트 5자리 코드)
+    const whRaw = body.items[0]?.WH_CD || '';
+    const whCode = await resolveWarehouseCode(c.env, whRaw);
+
+    // 이카운트 SavePurchases BulkDatas — WH_CD 필수(STRING(5))
+    const purchasesList = body.items.map((item, idx) => ({
+      BulkDatas: {
+        UPLOAD_SER_NO: String(idx + 1),
+        IO_DATE: item.IO_DATE,
+        CUST: item.CUST_CD,
+        CUST_DES: item.CUST_DES || '',
+        PROD_CD: item.PROD_CD,
+        QTY: item.QTY,
+        PRICE: item.PRICE,
+        SUPPLY_AMT: String((parseFloat(item.QTY) || 0) * (parseFloat(item.PRICE) || 0)),
+        VAT_AMT: String(Math.round((parseFloat(item.QTY) || 0) * (parseFloat(item.PRICE) || 0) * 0.1)),
+        WH_CD: whCode || '00005',
+        ...(item.REMARKS ? { REMARKS: item.REMARKS } : {}),
+      },
+      Line: String(idx),
+    }));
+
+    console.log('[ERP] SavePurchases 요청:', JSON.stringify({ PurchasesList: purchasesList }));
+    const result = await savePurchase(c.env, { PurchasesList: purchasesList });
+    console.log('[ERP] SavePurchases 응답:', JSON.stringify(result).slice(0, 1000));
+
+    // 이카운트 항목별 성공/실패 체크
+    const resultData = result?.Data;
+    if (resultData) {
+      const failCnt = resultData.FailCnt || 0;
+      const successCnt = resultData.SuccessCnt || 0;
+      const errors = resultData.Errors || resultData.Result?.filter((r: any) => r.IsError || r.Code !== '200') || [];
+      if (failCnt > 0 || (successCnt === 0 && errors.length > 0)) {
+        const errMsg = errors.map((e: any) => e.Message || e.Msg || JSON.stringify(e)).join('; ');
+        return c.json({
+          status: "error",
+          message: `이카운트 입력 실패 (성공:${successCnt}, 실패:${failCnt}): ${errMsg || '상세 정보 없음'}`,
+          data: result,
+        }, 400);
+      }
+    }
 
     // 워크플로우 자동 생성
     try {
@@ -596,7 +678,12 @@ erp.post("/customers", async (c) => {
   }
 
   try {
-    const result = await saveCustomer(c.env, { CustList: body.items });
+    const result = await saveCustomer(c.env, {
+      CustList: body.items.map((item, idx) => ({
+        BulkDatas: item,
+        Line: String(idx),
+      })),
+    });
     return c.json({
       status: "success",
       data: result,
@@ -626,6 +713,42 @@ erp.get("/customers/list", async (c) => {
   } catch (e: any) {
     console.error("[ERP] Customers list error:", e);
     return c.json({ status: "error", message: e.message || "거래처 조회 실패" }, 500);
+  }
+});
+
+// ─── GET /customers/search - 이카운트 거래처 검색 (KV 캐시) ───
+
+
+erp.get("/customers/search", async (c) => {
+  const q = (c.req.query("q") || "").trim().toLowerCase();
+  const limit = Math.min(parseInt(c.req.query("limit") || "10"), 50);
+
+  if (q.length < 1) {
+    return c.json({ status: "success", data: [] });
+  }
+
+  try {
+    // D1 companies 테이블에서 검색 (Dropbox 동기화된 거래처 코드 포함)
+    const db = drizzle(c.env.DB);
+    const allCompanies = await db.select().from(companies).all();
+    const filtered = allCompanies
+      .filter(co => co.isActive !== false)
+      .filter(co =>
+        (co.companyNm || "").toLowerCase().includes(q) ||
+        (co.companyCd || "").toLowerCase().includes(q) ||
+        (co.ceoNm || "").toLowerCase().includes(q)
+      );
+
+    const data = filtered.slice(0, limit).map(co => ({
+      companyCd: co.companyCd || "",
+      companyNm: co.companyNm,
+      ceoNm: co.ceoNm || null,
+    }));
+
+    return c.json({ status: "success", data });
+  } catch (e: any) {
+    console.error("[ERP] Customer search error:", e);
+    return c.json({ status: "error", message: e.message || "거래처 검색 실패" }, 500);
   }
 });
 
@@ -712,6 +835,19 @@ erp.post("/customers/sync", async (c) => {
   } catch (e: any) {
     console.error("[ERP] Customer sync error:", e);
     return c.json({ status: "error", message: e.message || "거래처 동기화 실패" }, 500);
+  }
+});
+
+// ─── GET /warehouses - 이카운트 창고코드 조회 ───
+erp.get("/warehouses", async (c) => {
+  try {
+    const warehouses = await getWarehouseList(c.env);
+    return c.json({
+      status: "success",
+      data: { warehouses },
+    });
+  } catch (e: any) {
+    return c.json({ status: "error", message: e.message }, 500);
   }
 });
 

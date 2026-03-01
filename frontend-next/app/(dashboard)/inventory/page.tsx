@@ -8,7 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-// ── KPROS 인터페이스 ──
+// ── 재고 인터페이스 ──
 interface KprosStockItem {
   productIdx: number;
   warehouseIdx: number;
@@ -154,7 +154,7 @@ export default function InventoryPage() {
         });
         setUsingCache(false);
       } else {
-        setKprosError(json.message || 'KPROS 재고 조회 실패');
+        setKprosError(json.message || '재고 조회 실패');
       }
     } catch {
       // API 실패 시 캐시 fallback
@@ -192,8 +192,14 @@ export default function InventoryPage() {
     }
 
     return [...items].sort((a, b) => {
-      const av = a[sortField]; const bv = b[sortField];
-      const cmp = typeof av === 'number' ? (av as number) - (bv as number) : String(av || '').localeCompare(String(bv || ''), 'ko');
+      let cmp: number;
+      if (sortField === 'sumStockQty') {
+        cmp = (Number(a.sumStockQty) || 0) - (Number(b.sumStockQty) || 0);
+      } else {
+        const av = String(a[sortField] ?? '');
+        const bv = String(b[sortField] ?? '');
+        cmp = av.localeCompare(bv, 'ko');
+      }
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }, [kprosData, selectedWarehouse, searchQuery, sortField, sortDir]);
@@ -397,7 +403,7 @@ export default function InventoryPage() {
       const date = new Date().toISOString().split('T')[0];
       await (html2pdf().set({
         margin: [12, 8, 12, 8],
-        filename: `KPROS_판매분석_안전재고계획_${date}.pdf`,
+        filename: `판매분석_안전재고계획_${date}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true, letterRendering: true },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -477,7 +483,7 @@ export default function InventoryPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">재고 관리 센터</h1>
-            <p className="text-sm text-slate-500 mt-1">KPROS ERP 실시간 재고 현황</p>
+            <p className="text-sm text-slate-500 mt-1">Dropbox Excel 기반 재고 현황</p>
           </div>
           <div className="flex items-center gap-3">
             {kprosData && (
@@ -596,7 +602,7 @@ export default function InventoryPage() {
             activeTab === 'kpros' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
           }`}
         >
-          KPROS 실시간 재고
+          재고 현황
         </button>
         <button
           onClick={() => setActiveTab('sales')}
@@ -609,7 +615,7 @@ export default function InventoryPage() {
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* TAB 1: KPROS 실시간 재고 */}
+      {/* TAB 1: 재고 현황 */}
       {/* ══════════════════════════════════════════ */}
       {activeTab === 'kpros' && (
         <div className="space-y-5 animate-fadeInUp">
@@ -618,8 +624,8 @@ export default function InventoryPage() {
               <div className="flex flex-col items-center gap-4">
                 <div className="w-12 h-12 border-[3px] border-slate-200 border-t-slate-800 rounded-full animate-spin" />
                 <div className="text-center">
-                  <p className="text-sm font-semibold text-slate-700">KPROS ERP 재고 조회 중...</p>
-                  <p className="text-xs text-slate-400 mt-1">최초 로딩 시 약 5~10초 소요</p>
+                  <p className="text-sm font-semibold text-slate-700">재고 데이터 조회 중...</p>
+                  <p className="text-xs text-slate-400 mt-1">Dropbox에서 최신 Excel 파일을 불러오고 있습니다</p>
                 </div>
               </div>
             </div>
@@ -759,7 +765,7 @@ export default function InventoryPage() {
                         <div className="flex-1 min-w-0">
                           <h3 className="text-lg font-bold text-slate-900 truncate">{selectedItem.productNm}</h3>
                           <div className="flex items-center gap-2 mt-1.5">
-                            <span className="inline-block px-2 py-0.5 rounded-md text-xs font-medium bg-green-50 text-green-700">KPROS</span>
+                            <span className="inline-block px-2 py-0.5 rounded-md text-xs font-medium bg-blue-50 text-blue-700">Dropbox</span>
                             <span className="inline-flex items-center gap-1 text-xs text-green-600">
                               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />활성
                             </span>
@@ -1066,8 +1072,8 @@ export default function InventoryPage() {
                     <p className="text-slate-500 text-xs">월별 추이, TOP 품목/거래처, 계절성 분석</p>
                   </div>
                   <div className="bg-white rounded-xl p-4 border border-slate-200">
-                    <div className="text-blue-600 font-bold mb-1">2. KPROS 재고 교차분석</div>
-                    <p className="text-slate-500 text-xs">실시간 재고와 판매 데이터 교차, 재고월수 산출</p>
+                    <div className="text-blue-600 font-bold mb-1">2. 재고 교차분석</div>
+                    <p className="text-slate-500 text-xs">현재 재고와 판매 데이터 교차, 재고월수 산출</p>
                   </div>
                   <div className="bg-white rounded-xl p-4 border border-slate-200">
                     <div className="text-purple-600 font-bold mb-1">3. AI 보고서 (Gemini 2.5 Pro)</div>
@@ -1188,7 +1194,7 @@ export default function InventoryPage() {
                 </div>
                 <div>
                   <p className="text-lg font-bold text-slate-800">판매 데이터 분석 중...</p>
-                  <p className="text-sm text-slate-500 mt-2">KPROS 재고 교차 분석 + Gemini 2.5 Pro AI 보고서 생성</p>
+                  <p className="text-sm text-slate-500 mt-2">재고 교차 분석 + Gemini 2.5 Pro AI 보고서 생성</p>
                   <p className="text-xs text-slate-400 mt-1">약 15~30초 소요됩니다</p>
                 </div>
               </div>
@@ -1324,16 +1330,16 @@ export default function InventoryPage() {
                   </div>
                 </div>
 
-                {/* KPROS 재고 교차분석 */}
+                {/* 재고 교차분석 */}
                 {!salesResult.kprosDataAvailable && (
                   <div className="bg-amber-50 text-amber-800 px-4 py-3 rounded-xl border border-amber-200 text-sm">
-                    KPROS 재고 데이터를 불러올 수 없어 판매 데이터만으로 분석했습니다. 재고월수/안전재고는 재고 연동 후 확인 가능합니다.
+                    재고 데이터를 불러올 수 없어 판매 데이터만으로 분석했습니다. 재고월수/안전재고는 재고 연동 후 확인 가능합니다.
                   </div>
                 )}
 
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
                   <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
-                    <h3 className="text-sm font-bold text-slate-700">KPROS 재고 교차분석 & 안전재고</h3>
+                    <h3 className="text-sm font-bold text-slate-700">재고 교차분석 & 안전재고</h3>
                   </div>
                   <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                     <table className="w-full text-sm">
@@ -1413,7 +1419,7 @@ export default function InventoryPage() {
                 <div className="text-center text-xs text-slate-400 py-3 border-t border-slate-200">
                   분석일시: {new Date(salesResult.analyzedAt).toLocaleString('ko-KR')}
                   {' · '}데이터 기간: {salesResult.overview.period.from} ~ {salesResult.overview.period.to}
-                  {salesResult.kprosDataAvailable && ' · KPROS 재고 연동 완료'}
+                  {salesResult.kprosDataAvailable && ' · 재고 연동 완료'}
                 </div>
               </div>
             </>

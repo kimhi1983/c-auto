@@ -16,7 +16,7 @@ import {
   getPurchases as getEcountPurchases,
   getProducts as getEcountProducts,
 } from "../services/ecount";
-import { isKprosConfigured, getKprosStock } from "../services/kpros";
+import { getDropboxStock } from "../services/dropbox-stock";
 import { isDropboxConfigured, getDropboxAccessToken as getDropboxToken, uploadDropboxFile, createDropboxFolder } from "../services/dropbox";
 import { generateXlsx } from "../utils/xlsx-writer";
 import type { Env } from "../types";
@@ -26,16 +26,16 @@ const inventory = new Hono<{ Bindings: Env }>();
 inventory.use("*", authMiddleware);
 
 /**
- * GET /inventory/kpros-stock - KPROS 재고 현황 (아카이브 모드: KV 캐시 데이터만 반환)
+ * GET /inventory/kpros-stock - 재고 현황 (Dropbox Excel 기반)
  */
 inventory.get("/kpros-stock", async (c) => {
-  if (!isKprosConfigured(c.env)) {
-    return c.json({ status: "error", message: "KPROS 인증 정보가 설정되지 않았습니다" }, 400);
+  if (!isDropboxConfigured(c.env)) {
+    return c.json({ status: "error", message: "Dropbox 인증 정보가 설정되지 않았습니다" }, 400);
   }
 
   const refresh = c.req.query("refresh") === "true";
   try {
-    const data = await getKprosStock(c.env, refresh);
+    const data = await getDropboxStock(c.env, refresh);
 
     // 오버라이드/숨김 적용
     if (c.env.CACHE) {
@@ -72,15 +72,15 @@ inventory.get("/kpros-stock", async (c) => {
         return c.json({ status: "success", data: cached, stale: true });
       }
     }
-    return c.json({ status: "error", message: err.message || "KPROS 재고 조회 실패" }, 500);
+    return c.json({ status: "error", message: err.message || "재고 조회 실패" }, 500);
   }
 });
 
 /**
- * GET /inventory/kpros-status - KPROS 연동 상태
+ * GET /inventory/kpros-status - 재고 연동 상태 (Dropbox)
  */
 inventory.get("/kpros-status", async (c) => {
-  return c.json({ status: "success", data: { configured: isKprosConfigured(c.env) } });
+  return c.json({ status: "success", data: { configured: isDropboxConfigured(c.env) } });
 });
 
 // ─── KPROS 재고 오버라이드(수정/삭제) ───
@@ -168,11 +168,10 @@ inventory.get("/kpros-stock/overrides", async (c) => {
  * POST /inventory/kpros-stock/export-dropbox - 수동 Dropbox 엑셀 저장
  */
 inventory.post("/kpros-stock/export-dropbox", async (c) => {
-  if (!isKprosConfigured(c.env)) return c.json({ status: "error", message: "KPROS 미설정" }, 400);
   if (!isDropboxConfigured(c.env)) return c.json({ status: "error", message: "Dropbox 미설정" }, 400);
 
   try {
-    const stockData = await getKprosStock(c.env, true);
+    const stockData = await getDropboxStock(c.env, true);
     if (!stockData.items?.length) return c.json({ status: "error", message: "재고 데이터 없음" }, 404);
 
     // 오버라이드/숨김 적용
@@ -1533,27 +1532,27 @@ inventory.post("/sales-analyze", async (c) => {
   const zMap: Record<number, number> = { 90: 1.28, 95: 1.65, 97: 1.88, 99: 2.33 };
   const Z = zMap[serviceLevel] || 1.65;
 
-  // ── 1. KPROS 재고 조회 (교차 참조용) ──
+  // ── 1. 재고 조회 (교차 참조용, Dropbox Excel 기반) ──
   let kprosItems: { productNm: string; sumStockQty: number; warehouseNm: string }[] = [];
   let kprosDataAvailable = false;
   try {
-    if (isKprosConfigured(c.env)) {
-      const kprosData = await getKprosStock(c.env);
+    if (isDropboxConfigured(c.env)) {
+      const stockData = await getDropboxStock(c.env);
       // 같은 품목 여러 창고 → 합산
       const stockMap = new Map<string, number>();
-      for (const item of kprosData.items) {
+      for (const item of stockData.items) {
         const name = item.productNm;
         stockMap.set(name, (stockMap.get(name) || 0) + item.sumStockQty);
       }
       kprosItems = Array.from(stockMap.entries()).map(([productNm, sumStockQty]) => ({
         productNm,
         sumStockQty,
-        warehouseNm: kprosData.items.find(i => i.productNm === productNm)?.warehouseNm || '',
+        warehouseNm: stockData.items.find(i => i.productNm === productNm)?.warehouseNm || '',
       }));
       kprosDataAvailable = true;
     }
   } catch (e) {
-    console.error("[Sales Analyze] KPROS 재고 조회 실패:", e);
+    console.error("[Sales Analyze] 재고 조회 실패:", e);
   }
 
   // ── 2. 판매 데이터 집계 ──

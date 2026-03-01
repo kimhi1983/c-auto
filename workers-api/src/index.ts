@@ -24,7 +24,7 @@ import memoryRouter from './routes/memory';
 import productsRouter from './routes/products';
 import coaDocsRouter from './routes/coa-documents';
 import { getAIEngineStatus, classifyEmailAdvanced } from './services/ai';
-import { isKprosConfigured, getKprosStock } from './services/kpros';
+import { getDropboxStock } from './services/dropbox-stock';
 import { isGmailConfigured, getGmailAccessToken, listGmailMessagesAll, getGmailMessage, parseGmailMessage, downloadGmailAttachment, base64UrlToBase64 } from './services/gmail';
 import { isDropboxConfigured, getDropboxAccessToken as getDropboxToken, uploadAttachmentToDropbox, uploadDropboxFile, createDropboxFolder } from './services/dropbox';
 import { drizzle } from 'drizzle-orm/d1';
@@ -352,7 +352,7 @@ import { generateXlsx } from './utils/xlsx-writer';
  * 재고 → Excel(xlsx) → Dropbox 업로드 핵심 로직 (cron + 수동 공용)
  */
 async function exportInventoryToDropbox(env: Env): Promise<{ path: string; itemCount: number; size: number }> {
-  const stockData = await getKprosStock(env, true);
+  const stockData = await getDropboxStock(env, true);
   if (!stockData.items || stockData.items.length === 0) {
     throw new Error('재고 데이터 없음');
   }
@@ -411,7 +411,7 @@ async function scheduledInventoryExport(env: Env) {
   const utcMinute = now.getUTCMinutes();
   if (utcHour !== 11 || utcMinute > 4) return; // 11:00~11:04 UTC 윈도우
 
-  if (!isKprosConfigured(env) || !isDropboxConfigured(env)) return;
+  if (!isDropboxConfigured(env)) return;
 
   // KV 중복 실행 방지
   const kstDate = new Date(now.getTime() + 9 * 60 * 60 * 1000);

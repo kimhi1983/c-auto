@@ -7,6 +7,9 @@ import { drizzle } from 'drizzle-orm/d1';
 import { eq, desc, and, like, or, sql, inArray } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth';
 import { orderWorkflows } from '../db/schema';
+import { isDropboxConfigured, getDropboxAccessToken, uploadDropboxFile, createDropboxFolder } from '../services/dropbox';
+import { generateXlsx } from '../utils/xlsx-writer';
+import { saveSale, savePurchase, getERPStatus, resolveWarehouseCode } from '../services/ecount';
 import type { Env } from '../types';
 
 const workflows = new Hono<{ Bindings: Env }>();
@@ -196,6 +199,9 @@ workflows.post('/', async (c) => {
     items: any[];
     totalAmount?: number;
     note?: string;
+    deliveryAddress?: string;
+    deliveryContact?: string;
+    deliveryPhone?: string;
     action?: 'draft' | 'submit'; // draft=임시저장, submit=승인요청
   }>();
 
@@ -219,6 +225,9 @@ workflows.post('/', async (c) => {
     itemsData: JSON.stringify(body.items),
     totalAmount: body.totalAmount || 0,
     note: body.note || null,
+    deliveryAddress: body.deliveryAddress || null,
+    deliveryContact: body.deliveryContact || null,
+    deliveryPhone: body.deliveryPhone || null,
     createdAt: now,
     updatedAt: now,
   }).returning();
@@ -265,10 +274,6 @@ workflows.put('/:id', async (c) => {
   const [row] = await db.select().from(orderWorkflows).where(eq(orderWorkflows.id, id)).limit(1);
   if (!row) return c.json({ status: 'error', message: '워크플로우를 찾을 수 없습니다' }, 404);
 
-  if (!['DRAFT', 'REJECTED'].includes(row.status)) {
-    return c.json({ status: 'error', message: '임시저장 또는 반려 상태에서만 수정 가능합니다' }, 400);
-  }
-
   const body = await c.req.json<{
     customerName?: string;
     custCd?: string;
@@ -276,6 +281,9 @@ workflows.put('/:id', async (c) => {
     items?: any[];
     totalAmount?: number;
     note?: string;
+    deliveryAddress?: string;
+    deliveryContact?: string;
+    deliveryPhone?: string;
     action?: 'draft' | 'submit';
   }>();
 
@@ -288,6 +296,9 @@ workflows.put('/:id', async (c) => {
   if (body.items) update.itemsData = JSON.stringify(body.items);
   if (body.totalAmount !== undefined) update.totalAmount = body.totalAmount;
   if (body.note !== undefined) update.note = body.note;
+  if (body.deliveryAddress !== undefined) update.deliveryAddress = body.deliveryAddress;
+  if (body.deliveryContact !== undefined) update.deliveryContact = body.deliveryContact;
+  if (body.deliveryPhone !== undefined) update.deliveryPhone = body.deliveryPhone;
 
   if (body.action === 'submit') {
     update.status = 'PENDING_APPROVAL';
@@ -303,7 +314,7 @@ workflows.put('/:id', async (c) => {
 });
 
 /**
- * POST /workflows/:id/approve - 승인 처리
+ * POST /workflows/:id/approve - 승인 처리 (ERP 실패 시 재시도 가능)
  */
 workflows.post('/:id/approve', async (c) => {
   const id = parseInt(c.req.param('id'));
@@ -313,37 +324,108 @@ workflows.post('/:id/approve', async (c) => {
   const [row] = await db.select().from(orderWorkflows).where(eq(orderWorkflows.id, id)).limit(1);
   if (!row) return c.json({ status: 'error', message: '워크플로우를 찾을 수 없습니다' }, 404);
 
-  if (row.status !== 'PENDING_APPROVAL') {
-    return c.json({ status: 'error', message: '승인대기 상태가 아닙니다' }, 400);
+  // PENDING_APPROVAL 또는 APPROVED(ERP 실패 후 재시도) 허용
+  if (!['PENDING_APPROVAL', 'APPROVED'].includes(row.status)) {
+    return c.json({ status: 'error', message: '승인대기 또는 승인완료 상태에서만 가능합니다' }, 400);
   }
 
   const body = await c.req.json<{ note?: string; items?: any[]; totalAmount?: number }>().catch(() => ({}));
   const now = new Date().toISOString();
 
-  // 승인 → 자동으로 ERP_SUBMITTED까지 전환 (실제 ERP API 미호출)
+  // 수정 후 승인 시 항목 업데이트
+  const finalItems = body.items || JSON.parse(row.itemsData || '[]');
+  if (body.items) {
+    await db.update(orderWorkflows).set({ itemsData: JSON.stringify(body.items) }).where(eq(orderWorkflows.id, id));
+  }
+  if (body.totalAmount !== undefined) {
+    await db.update(orderWorkflows).set({ totalAmount: body.totalAmount }).where(eq(orderWorkflows.id, id));
+  }
+
+  // 승인 → 실제 이카운트 ERP API 호출
+  const erpStatus = getERPStatus(c.env);
+  let erpResult: any = null;
+  let erpMode = 'simulation';
+
+  if (erpStatus.configured) {
+    try {
+      const ioDate = (row.ioDate || '').replace(/-/g, ''); // YYYY-MM-DD → YYYYMMDD
+      const custCd = row.custCd || '';
+      const custName = row.customerName || row.custName || '';
+
+      // WH_CD 변환 (창고 이름 → 이카운트 5자리 코드, 필수 필드)
+      const whRaw = finalItems[0]?.WH_CD || '';
+      const whCode = await resolveWarehouseCode(c.env, whRaw);
+
+      const bulkItems = finalItems.map((item: any, idx: number) => ({
+        BulkDatas: {
+          UPLOAD_SER_NO: String(idx + 1),
+          IO_DATE: ioDate,
+          CUST: custCd,
+          CUST_DES: custName,
+          PROD_CD: item.PROD_CD || '',
+          QTY: String(item.QTY || '0'),
+          PRICE: String(item.PRICE || '0'),
+          SUPPLY_AMT: String((parseFloat(item.QTY) || 0) * (parseFloat(item.PRICE) || 0)),
+          VAT_AMT: String(Math.round((parseFloat(item.QTY) || 0) * (parseFloat(item.PRICE) || 0) * 0.1)),
+          WH_CD: whCode || '00005',
+          ...(item.REMARKS ? { REMARKS: item.REMARKS } : {}),
+        },
+        Line: String(idx),
+      }));
+
+      console.log('[Workflow] ERP 전송 데이터:', JSON.stringify(bulkItems).slice(0, 500));
+
+      if (row.workflowType === 'SALES') {
+        erpResult = await saveSale(c.env, { SaleList: bulkItems });
+      } else if (row.workflowType === 'PURCHASE') {
+        erpResult = await savePurchase(c.env, { PurchasesList: bulkItems });
+      }
+
+      console.log('[Workflow] ERP 응답:', JSON.stringify(erpResult).slice(0, 500));
+
+      // 이카운트 응답에서 항목별 성공/실패 체크
+      const resultData = erpResult?.Data;
+      if (resultData) {
+        const failCnt = resultData.FailCnt || 0;
+        const successCnt = resultData.SuccessCnt || 0;
+        const errors = resultData.Errors || resultData.Result?.filter((r: any) => r.IsError || r.Code !== '200') || [];
+        if (failCnt > 0 || (successCnt === 0 && errors.length > 0)) {
+          const errMsg = errors.map((e: any) => e.Message || e.Msg || JSON.stringify(e)).join('; ');
+          throw new Error(`이카운트 항목 오류 (성공:${successCnt}, 실패:${failCnt}): ${errMsg || '상세 정보 없음'}`);
+        }
+      }
+      erpMode = 'live';
+    } catch (e: any) {
+      console.error('[Workflow] ERP 전송 실패:', e.message);
+      erpResult = { error: e.message };
+      erpMode = 'error';
+    }
+  }
+
+  // ERP 전송 실패 시 APPROVED 상태로 유지 (재시도 가능)
+  const finalStatus = erpMode === 'error' ? 'APPROVED' : 'ERP_SUBMITTED';
   const update: Record<string, any> = {
-    status: 'ERP_SUBMITTED',
+    status: finalStatus,
     approvedAt: now,
-    erpSubmittedAt: now,
-    erpResult: JSON.stringify({
-      mode: 'simulation',
-      message: 'ERP 자동전송 (시뮬레이션 - 실제 미전송)',
-      approvedAt: now,
-      orderNumber: row.orderNumber,
-    }),
+    ...(erpMode !== 'error' ? { erpSubmittedAt: now } : {}),
+    erpResult: JSON.stringify(erpResult || { mode: 'simulation', message: 'ERP 미설정 - 시뮬레이션' }),
     updatedAt: now,
   };
   if (body.note) update.note = body.note;
-  // 수정 후 승인 지원
-  if (body.items) update.itemsData = JSON.stringify(body.items);
-  if (body.totalAmount !== undefined) update.totalAmount = body.totalAmount;
 
   await db.update(orderWorkflows).set(update).where(eq(orderWorkflows.id, id));
 
+  const errorDetail = erpMode === 'error' ? ` (${(erpResult as any)?.error || '알 수 없는 오류'})` : '';
+  const message = erpMode === 'live'
+    ? '승인 완료 → 이카운트 ERP 전표 생성 완료'
+    : erpMode === 'error'
+    ? `ERP 전송 실패${errorDetail}`
+    : '승인 완료 (ERP 미설정 — 시뮬레이션)';
+
   return c.json({
-    status: 'success',
-    message: '승인 완료 → ERP 전표 자동 생성 (시뮬레이션)',
-    data: { id, status: 'ERP_SUBMITTED', erpMode: 'simulation' },
+    status: erpMode === 'error' ? 'error' : 'success',
+    message,
+    data: { id, status: finalStatus, erpMode, erpResult },
   });
 });
 
@@ -456,13 +538,88 @@ workflows.delete('/:id', async (c) => {
     .from(orderWorkflows).where(eq(orderWorkflows.id, id)).limit(1);
   if (!row) return c.json({ status: 'error', message: '워크플로우를 찾을 수 없습니다' }, 404);
 
-  // DRAFT/REJECTED만 삭제 가능
-  if (!['DRAFT', 'REJECTED'].includes(row.status)) {
-    return c.json({ status: 'error', message: '임시저장 또는 반려 상태에서만 삭제 가능합니다' }, 400);
-  }
-
   await db.delete(orderWorkflows).where(eq(orderWorkflows.id, id));
   return c.json({ status: 'success', message: '삭제 완료' });
+});
+
+/**
+ * POST /workflows/export-dropbox/:type - Dropbox Excel 저장
+ */
+workflows.post('/export-dropbox/:type', async (c) => {
+  const type = c.req.param('type').toUpperCase(); // sales → SALES, purchases → PURCHASE
+  const wfType = type === 'PURCHASES' ? 'PURCHASE' : type === 'SALES' ? 'SALES' : type;
+  if (!['SALES', 'PURCHASE'].includes(wfType)) {
+    return c.json({ status: 'error', message: '유형은 sales 또는 purchases 만 가능합니다' }, 400);
+  }
+
+  if (!isDropboxConfigured(c.env)) {
+    return c.json({ status: 'error', message: 'Dropbox 미설정' }, 400);
+  }
+
+  const db = drizzle(c.env.DB);
+  const rows = await db.select()
+    .from(orderWorkflows)
+    .where(eq(orderWorkflows.workflowType, wfType))
+    .orderBy(desc(orderWorkflows.id))
+    .limit(500);
+
+  if (rows.length === 0) {
+    return c.json({ status: 'error', message: '저장할 데이터가 없습니다' }, 404);
+  }
+
+  const labels = getLabels(wfType);
+  const isSales = wfType === 'SALES';
+  const sheetName = isSales ? '판매현황' : '구매현황';
+  const headers = ['주문번호', '일자', '거래처명', '품목코드', '품목명', '수량', '단가', '공급가', '창고', '상태', '비고'];
+
+  const xlsxRows: (string | number | null)[][] = [];
+  for (const row of rows) {
+    const items = JSON.parse(row.itemsData || '[]');
+    const custName = row.customerName || row.custName || '';
+    const statusLabel = labels[row.status] || ALL_LABELS[row.status] || row.status;
+    if (items.length === 0) {
+      xlsxRows.push([row.orderNumber || '', row.ioDate || '', custName, '', '', 0, 0, 0, '', statusLabel, row.note || '']);
+    } else {
+      for (const item of items) {
+        xlsxRows.push([
+          row.orderNumber || '',
+          row.ioDate || '',
+          custName,
+          item.PROD_CD || '',
+          item.PROD_DES || '',
+          Number(item.QTY || 0),
+          Number(item.PRICE || 0),
+          Number(item.SUPPLY_AMT || 0),
+          item.WH_CD || '',
+          statusLabel,
+          item.REMARKS || row.note || '',
+        ]);
+      }
+    }
+  }
+
+  const xlsx = generateXlsx(headers, xlsxRows, sheetName);
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const dateStr = kst.toISOString().slice(0, 10);
+  const timeStr = kst.toISOString().slice(11, 16).replace(':', '');
+  const folderName = isSales ? 'F.판매현황' : 'G.구매현황';
+  const folderPath = `/AI업무폴더/${folderName}`;
+  const filePath = `${folderPath}/${dateStr}_${timeStr}_${sheetName}.xlsx`;
+
+  try {
+    const token = await getDropboxAccessToken(c.env);
+    await createDropboxFolder(token, folderPath);
+    await uploadDropboxFile(token, filePath, xlsx);
+
+    return c.json({
+      status: 'success',
+      message: `${sheetName} ${xlsxRows.length}행 저장 완료`,
+      data: { filePath, itemCount: xlsxRows.length, workflowCount: rows.length },
+    });
+  } catch (err: any) {
+    return c.json({ status: 'error', message: `Dropbox 업로드 실패: ${err.message}` }, 500);
+  }
 });
 
 export default workflows;

@@ -235,8 +235,8 @@ async function apiCall(
     let bodyText = "";
     try { bodyText = await res.text(); } catch { /* ignore */ }
 
-    // 401/403/500 모두 세션 만료 가능 — 재시도
-    if ((res.status === 401 || res.status === 403 || res.status === 500) && retry) {
+    // 401/403/404/500 모두 세션 만료 가능 — 재시도
+    if ((res.status === 401 || res.status === 403 || res.status === 404 || res.status === 500) && retry) {
       console.warn("[Ecount] HTTP " + res.status + " on " + endpoint + " — 세션 갱신 후 재시도. body: " + bodyText.slice(0, 200));
       await refreshSession(env);
       return apiCall(env, endpoint, params, false);
@@ -459,14 +459,15 @@ export async function getProductItem(
 
 // ─── 품목 등록 ───
 // 공식 엔드포인트: /OAPI/V2/InventoryBasic/SaveBasicProduct
+// ProductList → BulkDatas: PROD_CD(필수), PROD_DES(필수), SIZE_FLAG, SIZE_DES, UNIT, PROD_TYPE, SET_FLAG, BAL_FLAG, WH_CD, IN_PRICE, OUT_PRICE, REMARKS_WIN
 
 export async function saveProduct(
   env: Env,
   product: {
-    PROD_CD: string;
-    PROD_DES: string;
-    UNIT?: string;
-    PRICE?: string;
+    ProductList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
   }
 ): Promise<any> {
   return apiCall(env, "/OAPI/V2/InventoryBasic/SaveBasicProduct", product);
@@ -474,18 +475,14 @@ export async function saveProduct(
 
 // ─── 판매 입력 ───
 // 공식 엔드포인트: /OAPI/V2/Sale/SaveSale
+// BulkDatas 필드: UPLOAD_SER_NO(순번,필수), IO_DATE, CUST(거래처코드), CUST_DES, WH_CD, PROD_CD, QTY, PRICE ...
 
 export async function saveSale(
   env: Env,
   sale: {
     SaleList: Array<{
-      IO_DATE: string;
-      CUST_CD: string;
-      PROD_CD: string;
-      QTY: string;
-      PRICE: string;
-      WH_CD?: string;
-      REMARKS?: string;
+      BulkDatas: Record<string, string>;
+      Line: string;
     }>;
   }
 ): Promise<any> {
@@ -494,18 +491,21 @@ export async function saveSale(
 
 // ─── 발주서 조회 ───
 // 공식 엔드포인트: /OAPI/V2/Purchases/GetPurchasesOrderList
+// Params: PROD_CD, CUST_CD, ListParam: { BASE_DATE_FROM, BASE_DATE_TO, PAGE_CURRENT }
 
 export async function getPurchaseOrders(
   env: Env,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  options?: { CUST_CD?: string; PROD_CD?: string }
 ): Promise<{ items: any[]; totalCount: number }> {
   const data = await apiCall(env, "/OAPI/V2/Purchases/GetPurchasesOrderList", {
-    FROM_DATE: dateFrom,
-    TO_DATE: dateTo,
-    LAN_TYPE: "ko-KR",
-    CUST: "",
-    PROD_CD: "",
+    PROD_CD: options?.PROD_CD || "",
+    CUST_CD: options?.CUST_CD || "",
+    ListParam: {
+      BASE_DATE_FROM: dateFrom,
+      BASE_DATE_TO: dateTo,
+    },
   });
 
   const items = data.Data?.Result || data.Data?.Datas || data.Data || [];
@@ -514,30 +514,48 @@ export async function getPurchaseOrders(
 
 // ─── 견적서 입력 ───
 // 공식 엔드포인트: /OAPI/V2/Quotation/SaveQuotation
+// QuotationList → BulkDatas: UPLOAD_SER_NO, IO_DATE, CUST, CUST_DES, PROD_CD, QTY, PRICE ...
 
 export async function saveQuotation(
   env: Env,
-  quotation: Record<string, any>
+  quotation: {
+    QuotationList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
+  }
 ): Promise<any> {
   return apiCall(env, "/OAPI/V2/Quotation/SaveQuotation", quotation);
 }
 
 // ─── 주문서 입력 ───
 // 공식 엔드포인트: /OAPI/V2/SaleOrder/SaveSaleOrder
+// SaleOrderList → BulkDatas: UPLOAD_SER_NO(필수), IO_DATE, CUST(거래처코드,필수), CUST_DES, EMP_CD, PROD_CD, QTY, PRICE ...
 
 export async function saveSaleOrder(
   env: Env,
-  order: Record<string, any>
+  order: {
+    SaleOrderList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
+  }
 ): Promise<any> {
   return apiCall(env, "/OAPI/V2/SaleOrder/SaveSaleOrder", order);
 }
 
 // ─── 구매 입력 ───
 // 공식 엔드포인트: /OAPI/V2/Purchases/SavePurchases
+// PurchasesList → BulkDatas: UPLOAD_SER_NO(필수), IO_DATE, CUST(거래처코드), CUST_DES, PROD_CD, QTY, PRICE, WH_CD ...
 
 export async function savePurchase(
   env: Env,
-  purchase: Record<string, any>
+  purchase: {
+    PurchasesList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
+  }
 ): Promise<any> {
   return apiCall(env, "/OAPI/V2/Purchases/SavePurchases", purchase);
 }
@@ -614,12 +632,73 @@ export async function getAllCustomers(
 
 // ─── 거래처 등록 ───
 // 공식 엔드포인트: /OAPI/V2/AccountBasic/SaveBasicCust
+// CustList → BulkDatas: BUSINESS_NO(=ERP거래처코드, 사업자번호10자리, 필수), CUST_NAME(필수), BOSS_NAME, UPTAE, JONGMOK, TEL, EMAIL, POST_NO, ADDR, G_GUBUN, FAX
 
 export async function saveCustomer(
   env: Env,
-  customer: Record<string, any>
+  customer: {
+    CustList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
+  }
 ): Promise<any> {
   return apiCall(env, "/OAPI/V2/AccountBasic/SaveBasicCust", customer);
+}
+
+// ─── 생산관리: 작업지시서 입력 ───
+// 공식 엔드포인트: /OAPI/V2/JobOrder/SaveJobOrder
+
+export async function saveJobOrder(
+  env: Env,
+  jobOrder: {
+    JobOrderList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
+  }
+): Promise<any> {
+  return apiCall(env, "/OAPI/V2/JobOrder/SaveJobOrder", jobOrder);
+}
+
+// ─── 생산관리: 생산불출 입력 ───
+// 공식 엔드포인트: /OAPI/V2/GoodsIssued/SaveGoodsIssued
+
+export async function saveGoodsIssued(
+  env: Env,
+  goodsIssued: {
+    GoodsIssuedList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
+  }
+): Promise<any> {
+  return apiCall(env, "/OAPI/V2/GoodsIssued/SaveGoodsIssued", goodsIssued);
+}
+
+// ─── 생산관리: 생산입고 입력 ───
+// 공식 엔드포인트: /OAPI/V2/GoodsReceipt/SaveGoodsReceipt
+
+export async function saveGoodsReceipt(
+  env: Env,
+  goodsReceipt: {
+    GoodsReceiptList: Array<{
+      BulkDatas: Record<string, string>;
+      Line: string;
+    }>;
+  }
+): Promise<any> {
+  return apiCall(env, "/OAPI/V2/GoodsReceipt/SaveGoodsReceipt", goodsReceipt);
+}
+
+// ─── 회계: 매출·매입전표 II 자동분개 ───
+// 공식 엔드포인트: /OAPI/V2/InvoiceAuto/SaveInvoiceAuto
+
+export async function saveInvoiceAuto(
+  env: Env,
+  invoice: Record<string, any>
+): Promise<any> {
+  return apiCall(env, "/OAPI/V2/InvoiceAuto/SaveInvoiceAuto", invoice);
 }
 
 // ─── ERP 연동 상태 확인 ───
@@ -636,6 +715,103 @@ export function getERPStatus(env: Env): {
     userId: !!env.ECOUNT_USER_ID,
     apiKey: !!env.ECOUNT_API_CERT_KEY,
   };
+}
+
+// ─── 창고코드 변환 (이름 → 이카운트 5자리 코드) ───
+
+const KV_WAREHOUSE_KEY = "ecount:warehouses";
+
+// 하드코딩 창고 목록 (InventoryBalance API 미인증 시 폴백)
+const FALLBACK_WAREHOUSES: Array<{ code: string; name: string }> = [
+  { code: '00001', name: '신도물산' },
+  { code: '00002', name: '에코트레이딩' },
+  { code: '00003', name: '에코트레이딩 부산' },
+  { code: '00004', name: '케이프로스 부산' },
+  { code: '00005', name: '케이프로스창고' },
+  { code: '00006', name: '삼성물류' },
+  { code: '00007', name: '카이코스텍' },
+  { code: '00008', name: '카이코스텍 창고' },
+  { code: '00009', name: '파워로직스' },
+  { code: '00010', name: '웰라이즈창고' },
+  { code: '00011', name: '웰라이즈 부산' },
+  { code: '00012', name: '아이앤씨' },
+  { code: '00013', name: '한국유통' },
+  { code: '00014', name: '세계로물류' },
+  { code: '00015', name: '동성물류' },
+  { code: '00016', name: '케이프로스 광주' },
+  { code: '00017', name: '물류센터1' },
+  { code: '00018', name: '물류센터2' },
+  { code: '00019', name: '에스엠물류' },
+  { code: '00020', name: '창고20' },
+  { code: '00021', name: '풍년물류' },
+  { code: '00022', name: '만석물류' },
+  { code: '00023', name: '우리물류' },
+  { code: '00024', name: '대한통운' },
+  { code: '00025', name: '한진택배창고' },
+  { code: '00026', name: '로젠물류' },
+  { code: '00027', name: '창고27' },
+  { code: '00028', name: '창고28' },
+  { code: '00029', name: '창고29' },
+  { code: '00030', name: '창고30' },
+  { code: '00031', name: '창고31' },
+  { code: '100', name: '와이에스물류창고' },
+];
+
+export async function getWarehouseList(env: Env): Promise<Array<{ code: string; name: string }>> {
+  // KV 캐시 확인 (1시간)
+  if (env.CACHE) {
+    const cached = await env.CACHE.get(KV_WAREHOUSE_KEY);
+    if (cached) return JSON.parse(cached);
+  }
+
+  try {
+    const result = await getInventoryByWarehouse(env);
+    const whMap = new Map<string, string>();
+    for (const item of result.items) {
+      const whCd = (item as any).WH_CD || '';
+      const whDes = (item as any).WH_DES || whCd;
+      if (whCd) whMap.set(whCd, whDes);
+    }
+    const list = Array.from(whMap.entries()).map(([code, name]) => ({ code, name }));
+
+    if (list.length > 0) {
+      if (env.CACHE) {
+        await env.CACHE.put(KV_WAREHOUSE_KEY, JSON.stringify(list), { expirationTtl: 3600 });
+      }
+      return list;
+    }
+  } catch (e: any) {
+    console.warn('[Ecount] 창고 목록 API 실패, 폴백 사용:', e.message);
+  }
+
+  // API 실패 또는 빈 결과 → 하드코딩 폴백
+  return FALLBACK_WAREHOUSES;
+}
+
+/**
+ * 창고 이름/코드를 이카운트 WH_CD(5자리)로 변환
+ * - 이미 5자리 코드면 그대로 반환
+ * - 이름이면 이카운트 창고 목록에서 매칭
+ */
+export async function resolveWarehouseCode(env: Env, whInput: string): Promise<string> {
+  if (!whInput) return '';
+  // 이미 5자리 이내 숫자코드면 그대로
+  if (/^\d{1,5}$/.test(whInput)) return whInput;
+
+  const list = await getWarehouseList(env);
+  const clean = whInput.replace(/[()（）㈜㈱주식회사]/g, '').trim().toLowerCase();
+
+  // 1) 정확한 이름 매칭
+  for (const wh of list) {
+    if (wh.name === whInput || wh.name.toLowerCase() === clean) return wh.code;
+  }
+  // 2) 부분 매칭 (이름에 포함)
+  for (const wh of list) {
+    const whClean = wh.name.toLowerCase();
+    if (whClean.includes(clean) || clean.includes(whClean)) return wh.code;
+  }
+  // 매칭 실패 — 기본 창고(케이프로스창고) 반환
+  return '00005';
 }
 
 // ─── 데이터 집계 유틸리티 ───

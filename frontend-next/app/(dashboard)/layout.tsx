@@ -282,11 +282,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     for (const section of NAV_SECTIONS) {
       for (const item of section.items) {
         if (item.children) {
-          const child = item.children.find(c => {
-            const childPath = c.href.split('?')[0];
-            return pathname === childPath || pathname === c.href;
-          });
-          if (child) return child.label;
+          // 자식이 쿼리 파라미터로 구분되는 경우 부모 라벨 사용
+          const basePath = item.href.split('?')[0];
+          if (pathname === basePath) return item.label;
         }
         if (pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href))) {
           return item.label;

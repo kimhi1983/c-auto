@@ -44,6 +44,9 @@ export default function LoginPage() {
       }
 
       localStorage.setItem('access_token', data.access_token);
+      if (data.user) {
+        localStorage.setItem('user_info', JSON.stringify(data.user));
+      }
 
       if (rememberMe) {
         localStorage.setItem('saved_email', email);

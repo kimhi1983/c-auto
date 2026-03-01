@@ -21,7 +21,6 @@ interface Company {
   managerEmail: string | null
   companyType: string | null
   isActive: boolean
-  kprosIdx: number | null
   createdAt: string
   updatedAt: string
 }
@@ -60,22 +59,6 @@ const TYPE_COLORS: Record<string, string> = {
   both: 'bg-purple-50 text-purple-700 border-purple-200',
 }
 
-// 소스 판별 함수
-function getSource(c: Company): 'kpros' | 'ecount' | 'manual' {
-  if (c.kprosIdx) return 'kpros'
-  if (c.companyCd && !c.kprosIdx) return 'ecount'
-  return 'manual'
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  kpros: 'KPROS', ecount: '이카운트', manual: '직접등록',
-}
-const SOURCE_COLORS: Record<string, string> = {
-  kpros: 'bg-cyan-50 text-cyan-700',
-  ecount: 'bg-emerald-50 text-emerald-700',
-  manual: 'bg-slate-100 text-slate-600',
-}
-
 // ── 탭 정의 ──
 type TabKey = 'all' | 'active' | 'customer' | 'supplier' | 'both'
 const TABS: { key: TabKey; label: string; icon: string }[] = [
@@ -100,8 +83,6 @@ export default function KprosPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
-  const [sourceFilter, setSourceFilter] = useState('')
-
   // ── 모달/패널 ──
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -111,6 +92,7 @@ export default function KprosPage() {
 
   // ── 액션 ──
   const [exporting, setExporting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [ecountMsg, setEcountMsg] = useState<{ type: 'success' | 'warning' | 'info'; text: string } | null>(null)
   const [usingCache, setUsingCache] = useState(false)
   const [cacheAge, setCacheAge] = useState('')
@@ -173,14 +155,9 @@ export default function KprosPage() {
       const res = await fetch(apiUrl(`/api/v1/kpros/companies?${params}`), { headers: authHeaders() })
       const json = await res.json()
       if (json.status === 'success') {
-        let data = json.data as Company[] || []
-        // 클라이언트 소스 필터
-        if (sourceFilter) {
-          data = data.filter(c => getSource(c) === sourceFilter)
-        }
-        setCompanies(data)
-        setTotal(sourceFilter ? data.length : (json.total || 0))
-        setTotalPages(sourceFilter ? 1 : (json.totalPages || 1))
+        setCompanies(json.data as Company[] || [])
+        setTotal(json.total || 0)
+        setTotalPages(json.totalPages || 1)
       } else {
         setError(json.message || '조회 실패')
       }
@@ -189,7 +166,7 @@ export default function KprosPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, searchTerm, activeTab, typeFilter, sourceFilter])
+  }, [page, searchTerm, activeTab, typeFilter])
 
   useEffect(() => { fetchCompanies() }, [fetchCompanies])
   useEffect(() => { fetchAllCompanies() }, [fetchAllCompanies])
@@ -240,6 +217,25 @@ export default function KprosPage() {
     } catch (e: any) { setError(e.message) }
   }
 
+  const handleSyncDropbox = async () => {
+    if (!confirm('Dropbox 거래처 Excel 파일에서 동기화하시겠습니까?\n\n⚠️ 기존 거래처 데이터가 모두 삭제되고 Dropbox Excel 파일의 내용으로 새로 등록됩니다.')) return
+    setSyncing(true)
+    setError('')
+    try {
+      const res = await fetch(apiUrl('/api/v1/kpros/companies/sync-dropbox'), { method: 'POST', headers: authHeaders() })
+      const json = await res.json()
+      if (json.status === 'success') {
+        setEcountMsg({ type: 'success', text: json.message || '동기화 완료' })
+        setTimeout(() => setEcountMsg(null), 5000)
+        fetchCompanies()
+        fetchAllCompanies()
+      } else {
+        setError(json.message || '동기화 실패')
+      }
+    } catch (e: any) { setError(e.message || '동기화 오류') }
+    finally { setSyncing(false) }
+  }
+
   const handleExportCSV = async () => {
     setExporting(true)
     try {
@@ -248,13 +244,12 @@ export default function KprosPage() {
       if (json.status !== 'success' || !json.data?.length) { setError('내보낼 데이터가 없습니다'); return }
       const allData = json.data as Company[]
       const BOM = '\uFEFF'
-      const headers = ['거래처코드','거래처명','대표자','사업자번호','전화','팩스','이메일','주소','담당자명','담당자전화','담당자이메일','거래유형','소스','메모']
+      const headers = ['거래처코드','거래처명','대표자','사업자번호','전화','팩스','이메일','주소','담당자명','담당자전화','담당자이메일','거래유형','메모']
       const rows = allData.map(c => [
         c.companyCd||'', c.companyNm, c.ceoNm||'', c.bizNo||'',
         c.tel||'', c.fax||'', c.email||'', c.addr||'',
         c.managerNm||'', c.managerTel||'', c.managerEmail||'',
         TYPE_LABELS[c.companyType||'']||c.companyType||'',
-        SOURCE_LABELS[getSource(c)],
         (c.memo||'').replace(/"/g, '""'),
       ])
       const csv = BOM + [headers.join(','), ...rows.map(r => r.map(v => `"${v}"`).join(','))].join('\n')
@@ -315,18 +310,22 @@ export default function KprosPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-slate-900">거래처 관리</h1>
-              <p className="text-sm text-slate-500 mt-1">거래처 통합 관리 (이카운트 ERP 연동)</p>
+              <p className="text-sm text-slate-500 mt-1">거래처 통합 관리 (Dropbox + 이카운트 ERP)</p>
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={handleExportCSV}
-                disabled={exporting || total === 0}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                onClick={handleSyncDropbox}
+                disabled={syncing}
+                className="px-3 py-2 rounded-xl border border-blue-200 bg-blue-50 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50 flex items-center gap-1.5"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                {exporting ? '내보내기...' : 'CSV'}
+                {syncing ? (
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                )}
+                {syncing ? '동기화 중...' : 'Dropbox 동기화'}
               </button>
               <button
                 onClick={openCreate}
@@ -433,16 +432,6 @@ export default function KprosPage() {
                   <option value="both">매입/매출</option>
                 </select>
               )}
-              <select
-                value={sourceFilter}
-                onChange={e => { setSourceFilter(e.target.value); setPage(1) }}
-                className="px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-              >
-                <option value="">소스 전체</option>
-                <option value="kpros">KPROS</option>
-                <option value="ecount">이카운트</option>
-                <option value="manual">직접등록</option>
-              </select>
             </div>
           </div>
 
@@ -475,18 +464,17 @@ export default function KprosPage() {
                 <thead className="sticky top-0 bg-white z-10">
                   <tr className="border-b border-slate-100">
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">거래처명</th>
+                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden sm:table-cell">거래처코드</th>
                     <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden sm:table-cell">대표자</th>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">사업자번호</th>
                     <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">전화</th>
                     <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">유형</th>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">소스</th>
                     <th className="text-center px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell w-16">상태</th>
                   </tr>
                 </thead>
                 <tbody>
                   {companies.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-16">
+                      <td colSpan={6} className="text-center py-16">
                         <div className="flex flex-col items-center gap-3">
                           <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
                             <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -502,7 +490,6 @@ export default function KprosPage() {
                     </tr>
                   ) : (
                     companies.map(c => {
-                      const source = getSource(c)
                       const isSelected = selectedCompany?.id === c.id
                       return (
                         <tr
@@ -514,10 +501,9 @@ export default function KprosPage() {
                         >
                           <td className="px-4 py-3">
                             <div className="font-medium text-slate-800">{c.companyNm}</div>
-                            {c.companyCd && <div className="text-xs text-slate-400 mt-0.5">{c.companyCd}</div>}
                           </td>
+                          <td className="px-3 py-3 text-slate-500 text-xs hidden sm:table-cell">{c.companyCd || <span className="text-slate-300">-</span>}</td>
                           <td className="px-3 py-3 text-slate-600 hidden sm:table-cell">{c.ceoNm || <span className="text-slate-300">-</span>}</td>
-                          <td className="px-3 py-3 text-slate-500 text-xs hidden md:table-cell">{c.bizNo || <span className="text-slate-300">-</span>}</td>
                           <td className="px-3 py-3 text-slate-500 text-xs hidden md:table-cell">{c.tel || c.managerTel || <span className="text-slate-300">-</span>}</td>
                           <td className="px-3 py-3 hidden lg:table-cell">
                             {c.companyType ? (
@@ -525,11 +511,6 @@ export default function KprosPage() {
                                 {TYPE_LABELS[c.companyType] || c.companyType}
                               </span>
                             ) : <span className="text-slate-300 text-xs">-</span>}
-                          </td>
-                          <td className="px-3 py-3 hidden lg:table-cell">
-                            <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${SOURCE_COLORS[source]}`}>
-                              {SOURCE_LABELS[source]}
-                            </span>
                           </td>
                           <td className="px-3 py-3 text-center hidden lg:table-cell">
                             {c.isActive ? (
@@ -703,8 +684,6 @@ function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
   onEdit: (c: Company) => void
   onDelete: (id: number, name: string) => void
 }) {
-  const source = getSource(c)
-
   const InfoRow = ({ label, value }: { label: string; value: string | null | undefined }) => (
     <div className="flex items-start py-2">
       <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">{label}</span>
@@ -720,9 +699,6 @@ function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
           <div className="flex-1 min-w-0">
             <h3 className="text-lg font-bold text-slate-900 truncate">{c.companyNm}</h3>
             <div className="flex items-center gap-2 mt-1.5">
-              <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${SOURCE_COLORS[source]}`}>
-                {SOURCE_LABELS[source]}
-              </span>
               {c.companyType && (
                 <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium border ${TYPE_COLORS[c.companyType]}`}>
                   {TYPE_LABELS[c.companyType]}
@@ -791,7 +767,6 @@ function DetailPanel({ company: c, onClose, onEdit, onDelete }: {
           <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
             <InfoRow label="등록일" value={c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : null} />
             <InfoRow label="수정일" value={c.updatedAt ? new Date(c.updatedAt).toLocaleDateString('ko-KR') : null} />
-            {c.kprosIdx && <InfoRow label="KPROS ID" value={String(c.kprosIdx)} />}
           </div>
         </div>
       </div>

@@ -97,6 +97,20 @@ export default function SalesInputPage() {
   const [whDes, setWhDes] = useState('');
   const [shipMethod, setShipMethod] = useState('');
 
+  // 배송정보
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryContact, setDeliveryContact] = useState('');
+  const [deliveryPhone, setDeliveryPhone] = useState('');
+
+  // 로그인 사용자 정보
+  const [userInfo, setUserInfo] = useState<{ email?: string; full_name?: string; role?: string }>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('user_info');
+      if (raw) setUserInfo(JSON.parse(raw));
+    } catch { /* silent */ }
+  }, []);
+
   // 테이블 행 (기본 3행)
   const [rows, setRows] = useState<SaleRow[]>(
     Array.from({ length: DEFAULT_ROWS }, () => emptyRow())
@@ -114,7 +128,6 @@ export default function SalesInputPage() {
   // UI 상태
   const [productsLoading, setProductsLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const [showList, setShowList] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -233,6 +246,10 @@ export default function SalesInputPage() {
         }
         // 비고에서 출고방식 추출
         if (wf.note?.startsWith('출고방식: ')) setShipMethod(wf.note.replace('출고방식: ', ''));
+        // 배송정보 로드
+        if (wf.deliveryAddress) setDeliveryAddress(wf.deliveryAddress);
+        if (wf.deliveryContact) setDeliveryContact(wf.deliveryContact);
+        if (wf.deliveryPhone) setDeliveryPhone(wf.deliveryPhone);
         // 품목
         const items = wf.items || JSON.parse(wf.itemsData || '[]');
         if (items.length > 0) {
@@ -268,14 +285,16 @@ export default function SalesInputPage() {
     custDebounceRef.current = setTimeout(async () => {
       try {
         const res = await fetch(
-          apiUrl(`/api/v1/kpros/companies?search=${encodeURIComponent(custSearch)}&limit=10`),
+          apiUrl(`/api/v1/erp/customers/search?q=${encodeURIComponent(custSearch)}&limit=10`),
           { headers: authHeaders() }
         );
         const json = await res.json();
         if (json.status === 'success') {
           setCustResults(json.data || []);
+        } else {
+          setCustResults([]);
         }
-      } catch { /* ignore */ } finally {
+      } catch { setCustResults([]); } finally {
         setCustLoading(false);
       }
     }, 300);
@@ -285,13 +304,27 @@ export default function SalesInputPage() {
   // 출하창고 목록 로드
   const fetchWarehouses = async () => {
     try {
+      // 이카운트 ERP 창고코드 목록 사용
+      const res = await fetch(apiUrl('/api/v1/erp/warehouses'), { headers: authHeaders() });
+      const json = await res.json();
+      if (json.status === 'success' && json.data?.warehouses?.length > 0) {
+        const HIDDEN_WH = ['카이코스텍', '카이코스텍 창고'];
+        setWarehouseList(
+          json.data.warehouses
+            .filter((w: { name: string }) => !HIDDEN_WH.some(h => w.name.includes(h)))
+            .map((w: { code: string; name: string }) => ({ code: w.code, name: w.name }))
+        );
+        return;
+      }
+    } catch { /* fallback */ }
+    // Fallback: 재고현황에서 로드
+    try {
       const res = await fetch(apiUrl('/api/v1/inventory/kpros-stock'), { headers: authHeaders() });
       const json = await res.json();
       if (json.status === 'success' && json.data?.warehouses) {
-        const HIDDEN_WH = '카이코스텍';
         setWarehouseList(
           json.data.warehouses
-            .filter((w: { name: string }) => w.name !== HIDDEN_WH)
+            .filter((w: { name: string }) => !w.name.includes('카이코스텍'))
             .map((w: { name: string; code?: string }) => ({ code: w.code || w.name, name: w.name }))
         );
       }
@@ -347,53 +380,7 @@ export default function SalesInputPage() {
   const validRows = rows.filter(r => r.PROD_CD && r.QTY && r.PRICE);
   const canSubmit = validRows.length > 0 && custCd.trim() !== '';
 
-  const handleSubmit = async () => {
-    setShowConfirm(false);
-    setSubmitting(true);
-    setSuccessMsg(null);
-    setErrorMsg(null);
-
-    const items = validRows.map(r => ({
-      IO_DATE: toYMD(date.year, date.month, date.day),
-      CUST_CD: custCd,
-      PROD_CD: r.PROD_CD,
-      QTY: r.QTY,
-      PRICE: r.PRICE,
-      ...(whCd ? { WH_CD: whCd } : {}),
-      ...(r.REMARKS ? { REMARKS: r.REMARKS } : {}),
-    }));
-
-    try {
-      const res = await fetch(apiUrl('/api/v1/erp/sales'), {
-        method: 'POST',
-        headers: authJsonHeaders(),
-        body: JSON.stringify({ items }),
-      });
-      const json = await res.json();
-      if (json.status === 'success') {
-        setSuccessMsg(json.message || `${items.length}건 판매 입력 완료`);
-        // ERP 전송 성공 시에도 패턴 학습
-        fetch(apiUrl('/api/v1/memory/learn'), {
-          method: 'POST',
-          headers: authJsonHeaders(),
-          body: JSON.stringify({
-            custCd, custDes, whCd, whDes, workflowType: 'SALES',
-            items: validRows.map(r => ({ PROD_CD: r.PROD_CD, PROD_DES: r.PROD_DES, PRICE: r.PRICE, UNIT: r.SPEC })),
-          }),
-        }).catch(() => {});
-        handleReset();
-        fetchRecentSales();
-      } else {
-        setErrorMsg(json.message || '판매 입력 실패');
-      }
-    } catch {
-      setErrorMsg('서버 연결 오류');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // ─── 승인 워크플로우 저장 ───
+  // ─── 승인 워크플로우 저장 (승인 시 자동 ERP 전송) ───
 
   const handleWorkflowSave = async (action: 'draft' | 'submit') => {
     if (validRows.length === 0) { setErrorMsg('품목을 입력하세요'); return; }
@@ -423,6 +410,9 @@ export default function SalesInputPage() {
         items,
         totalAmount: totals.supply + totals.vat,
         note: shipMethod ? `출고방식: ${shipMethod}` : undefined,
+        deliveryAddress: deliveryAddress || undefined,
+        deliveryContact: deliveryContact || undefined,
+        deliveryPhone: deliveryPhone || undefined,
         action,
       };
 
@@ -466,6 +456,9 @@ export default function SalesInputPage() {
     setWhCd('');
     setWhDes('');
     setShipMethod('');
+    setDeliveryAddress('');
+    setDeliveryContact('');
+    setDeliveryPhone('');
     setRows(Array.from({ length: DEFAULT_ROWS }, () => emptyRow()));
     setDate(todayParts());
   };
@@ -588,17 +581,22 @@ export default function SalesInputPage() {
               <input
                 type="text"
                 value={custCd}
-                readOnly
+                onChange={e => setCustCd(e.target.value)}
                 placeholder="코드"
-                className={`${headerInputCls} w-28 bg-slate-50 cursor-default`}
+                className={`${headerInputCls} w-28`}
               />
               <div className="relative flex-1">
                 <input
                   type="text"
                   value={showCustDropdown ? custSearch : custDes}
-                  onChange={e => { setCustSearch(e.target.value); setShowCustDropdown(true); }}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setCustSearch(v);
+                    setCustDes(v);
+                    setShowCustDropdown(true);
+                  }}
                   onFocus={() => setShowCustDropdown(true)}
-                  placeholder="거래처명 검색 (2자 이상)"
+                  placeholder="거래처명 검색 또는 직접 입력"
                   className={`${headerInputCls} w-full`}
                 />
                 {custLoading && (
@@ -680,11 +678,11 @@ export default function SalesInputPage() {
               )}
             </div>
 
-            {/* 담당자 (표시만) */}
+            {/* 담당자 (로그인 사용자 자동 표시) */}
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-500 w-16 shrink-0">담당자</label>
-              <input type="text" placeholder="담당자" className={`${headerInputCls} w-28`} />
-              <input type="text" placeholder="" className={`${headerInputCls} flex-1 bg-slate-50`} readOnly />
+              <input type="text" value={userInfo.email?.split('@')[0] || ''} className={`${headerInputCls} w-28 bg-slate-50`} readOnly />
+              <input type="text" value={userInfo.full_name ? `${userInfo.full_name} (${userInfo.role || ''})` : ''} className={`${headerInputCls} flex-1 bg-slate-50`} readOnly />
             </div>
 
             {/* 출하창고 - KPROS 창고 드롭다운 */}
@@ -764,6 +762,40 @@ export default function SalesInputPage() {
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          {/* 배송정보 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-2 mt-3 pt-3 border-t border-slate-200">
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-500 w-16 shrink-0">도착주소</label>
+              <input
+                type="text"
+                value={deliveryAddress}
+                onChange={e => setDeliveryAddress(e.target.value)}
+                placeholder="배송 도착 주소"
+                className={`${headerInputCls} flex-1`}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-500 w-16 shrink-0">담당자</label>
+              <input
+                type="text"
+                value={deliveryContact}
+                onChange={e => setDeliveryContact(e.target.value)}
+                placeholder="도착지 담당자명"
+                className={`${headerInputCls} flex-1`}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-500 w-16 shrink-0">연락처</label>
+              <input
+                type="text"
+                value={deliveryPhone}
+                onChange={e => setDeliveryPhone(e.target.value)}
+                placeholder="연락처"
+                className={`${headerInputCls} flex-1`}
+              />
             </div>
           </div>
         </div>
@@ -947,15 +979,6 @@ export default function SalesInputPage() {
           >
             {submitting ? '처리 중...' : '승인요청 →'}
           </button>
-          <div className="w-px h-6 bg-slate-300 mx-1" />
-          <button
-            onClick={() => setShowConfirm(true)}
-            disabled={!canSubmit || submitting}
-            className="px-4 py-2 bg-amber-400 text-slate-900 font-bold text-sm rounded-lg hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-sm"
-            title="이카운트 ERP 직접 전송"
-          >
-            ERP 전송
-          </button>
           <button
             onClick={handleReset}
             className="px-4 py-2 bg-white border border-slate-300 text-sm text-slate-700 rounded-lg hover:bg-slate-100 transition"
@@ -1024,26 +1047,6 @@ export default function SalesInputPage() {
       )}
 
       {/* 확인 모달 */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowConfirm(false)}>
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-slate-900 mb-2">판매 전송 확인</h3>
-            <div className="text-sm text-slate-600 mb-4 space-y-1">
-              <p>일자: <strong>{date.year}/{date.month}/{date.day}</strong></p>
-              <p>거래처: <strong>{custCd}</strong> {custDes}</p>
-              <p>건수: <strong>{validRows.length}건</strong></p>
-              <p>공급가액: <strong>{totals.supply.toLocaleString()}</strong></p>
-              <p>부가세: <strong>{totals.vat.toLocaleString()}</strong></p>
-              <p className="text-base mt-2">합계: <strong className="text-blue-700 text-lg">₩{(totals.supply + totals.vat).toLocaleString()}</strong></p>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setShowConfirm(false)} className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition">취소</button>
-              <button onClick={handleSubmit} className="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition">전송</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 드롭다운 닫기용 오버레이 */}
       {(openDropdown || showCustDropdown || showWhDropdown) && (
         <div className="fixed inset-0 z-40" onClick={() => { setOpenDropdown(null); setShowCustDropdown(false); setShowWhDropdown(false); }} />

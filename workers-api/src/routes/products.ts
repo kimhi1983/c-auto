@@ -7,7 +7,8 @@ import { eq, desc, like, or, and, count } from "drizzle-orm";
 import { products } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import { getProducts as getEcountProducts, getERPStatus } from "../services/ecount";
-import { isKprosConfigured, getKprosStock } from "../services/kpros";
+import { getDropboxStock } from "../services/dropbox-stock";
+import { isDropboxConfigured } from "../services/dropbox";
 import type { Env, UserContext } from "../types";
 
 const productsRouter = new Hono<{ Bindings: Env; Variables: { user: UserContext } }>();
@@ -273,12 +274,12 @@ productsRouter.post("/sync-ecount", async (c) => {
 // ─── POST /sync-kpros - KPROS 재고(품목) → D1 동기화 ───
 
 productsRouter.post("/sync-kpros", async (c) => {
-  if (!isKprosConfigured(c.env)) {
-    return c.json({ status: "error", message: "KPROS 인증 정보가 설정되지 않았습니다" }, 400);
+  if (!isDropboxConfigured(c.env)) {
+    return c.json({ status: "error", message: "Dropbox 인증 정보가 설정되지 않았습니다" }, 400);
   }
 
   try {
-    const stockData = await getKprosStock(c.env, true);
+    const stockData = await getDropboxStock(c.env, true);
 
     if (stockData.items.length === 0) {
       return c.json({
