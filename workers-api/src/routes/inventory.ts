@@ -11,9 +11,14 @@ import { askAIAnalyze, askAIAnalyzePro } from "../services/ai";
 import {
   getERPStatus,
   getInventory as getEcountInventory,
+  getInventoryByWarehouse as getEcountInventoryByWarehouse,
   getSales as getEcountSales,
+  getPurchases as getEcountPurchases,
+  getProducts as getEcountProducts,
 } from "../services/ecount";
 import { isKprosConfigured, getKprosStock } from "../services/kpros";
+import { isDropboxConfigured, getDropboxAccessToken as getDropboxToken, uploadDropboxFile, createDropboxFolder } from "../services/dropbox";
+import { generateXlsx } from "../utils/xlsx-writer";
 import type { Env } from "../types";
 
 const inventory = new Hono<{ Bindings: Env }>();
@@ -21,23 +26,53 @@ const inventory = new Hono<{ Bindings: Env }>();
 inventory.use("*", authMiddleware);
 
 /**
- * GET /inventory/kpros-stock - KPROS ERP 실시간 재고 현황
+ * GET /inventory/kpros-stock - KPROS 재고 현황 (아카이브 모드: KV 캐시 데이터만 반환)
  */
 inventory.get("/kpros-stock", async (c) => {
   if (!isKprosConfigured(c.env)) {
-    return c.json({ status: "error", message: "KPROS 인증 정보 미설정", configured: false }, 400);
+    return c.json({ status: "error", message: "KPROS 인증 정보가 설정되지 않았습니다" }, 400);
   }
-  const forceRefresh = c.req.query("refresh") === "true";
+
+  const refresh = c.req.query("refresh") === "true";
   try {
-    const data = await getKprosStock(c.env, forceRefresh);
-    return c.json({ status: "success", data });
-  } catch (e: any) {
-    // 오류 시 캐시 데이터 반환 시도
+    const data = await getKprosStock(c.env, refresh);
+
+    // 오버라이드/숨김 적용
     if (c.env.CACHE) {
-      const stale = await c.env.CACHE.get("kpros:stock_data", "json");
-      if (stale) return c.json({ status: "success", data: stale, stale: true });
+      const overridesRaw = await c.env.CACHE.get(KV_OVERRIDES_KEY);
+      const hiddenRaw = await c.env.CACHE.get(KV_HIDDEN_KEY);
+      const overrides: Record<string, any> = overridesRaw ? JSON.parse(overridesRaw) : {};
+      const hidden: string[] = hiddenRaw ? JSON.parse(hiddenRaw) : [];
+
+      if (hidden.length > 0) {
+        data.items = data.items.filter(
+          (item: any) => !hidden.includes(`${item.productIdx}-${item.warehouseIdx}`)
+        );
+      }
+      if (Object.keys(overrides).length > 0) {
+        data.items = data.items.map((item: any) => {
+          const key = `${item.productIdx}-${item.warehouseIdx}`;
+          return overrides[key] ? { ...item, ...overrides[key] } : item;
+        });
+      }
+      // 통계 재계산
+      data.totalCount = data.items.length;
+      data.totalQty = data.items.reduce((s: number, i: any) => s + (i.sumStockQty || 0), 0);
+      data.zeroStockCount = data.items.filter((i: any) => !i.sumStockQty).length;
     }
-    return c.json({ status: "error", message: e.message }, 500);
+
+    const stale = !refresh && data.fetchedAt
+      ? (Date.now() - new Date(data.fetchedAt).getTime()) > 30 * 60 * 1000
+      : false;
+    return c.json({ status: "success", data, stale });
+  } catch (err: any) {
+    if (c.env.CACHE) {
+      const cached = await c.env.CACHE.get("kpros:stock_data", "json");
+      if (cached) {
+        return c.json({ status: "success", data: cached, stale: true });
+      }
+    }
+    return c.json({ status: "error", message: err.message || "KPROS 재고 조회 실패" }, 500);
   }
 });
 
@@ -46,6 +81,273 @@ inventory.get("/kpros-stock", async (c) => {
  */
 inventory.get("/kpros-status", async (c) => {
   return c.json({ status: "success", data: { configured: isKprosConfigured(c.env) } });
+});
+
+// ─── KPROS 재고 오버라이드(수정/삭제) ───
+
+const KV_OVERRIDES_KEY = "kpros:stock_overrides";
+const KV_HIDDEN_KEY = "kpros:stock_hidden";
+
+/**
+ * PUT /inventory/kpros-stock/override - 재고 항목 수정 (KV 오버라이드 저장)
+ */
+inventory.put("/kpros-stock/override", async (c) => {
+  if (!c.env.CACHE) return c.json({ status: "error", message: "KV 없음" }, 500);
+  const body = await c.req.json<{
+    productIdx: number;
+    warehouseIdx: number;
+    fields: { productNm?: string; sumStockQty?: number; pkgUnitNm?: string; manuNmList?: string | null; braNmList?: string | null };
+  }>();
+
+  const key = `${body.productIdx}-${body.warehouseIdx}`;
+  const raw = await c.env.CACHE.get(KV_OVERRIDES_KEY);
+  const overrides: Record<string, any> = raw ? JSON.parse(raw) : {};
+  overrides[key] = { ...overrides[key], ...body.fields };
+  await c.env.CACHE.put(KV_OVERRIDES_KEY, JSON.stringify(overrides));
+
+  return c.json({ status: "success", message: "수정 완료", key });
+});
+
+/**
+ * DELETE /inventory/kpros-stock/override/:key - 오버라이드 제거 (원본 복원)
+ */
+inventory.delete("/kpros-stock/override/:key", async (c) => {
+  if (!c.env.CACHE) return c.json({ status: "error", message: "KV 없음" }, 500);
+  const key = c.req.param("key");
+  const raw = await c.env.CACHE.get(KV_OVERRIDES_KEY);
+  const overrides: Record<string, any> = raw ? JSON.parse(raw) : {};
+  delete overrides[key];
+  await c.env.CACHE.put(KV_OVERRIDES_KEY, JSON.stringify(overrides));
+  return c.json({ status: "success", message: "원본 복원 완료" });
+});
+
+/**
+ * POST /inventory/kpros-stock/hide - 재고 항목 숨기기(삭제)
+ */
+inventory.post("/kpros-stock/hide", async (c) => {
+  if (!c.env.CACHE) return c.json({ status: "error", message: "KV 없음" }, 500);
+  const { productIdx, warehouseIdx } = await c.req.json<{ productIdx: number; warehouseIdx: number }>();
+  const key = `${productIdx}-${warehouseIdx}`;
+  const raw = await c.env.CACHE.get(KV_HIDDEN_KEY);
+  const hidden: string[] = raw ? JSON.parse(raw) : [];
+  if (!hidden.includes(key)) hidden.push(key);
+  await c.env.CACHE.put(KV_HIDDEN_KEY, JSON.stringify(hidden));
+  return c.json({ status: "success", message: "삭제 완료", key });
+});
+
+/**
+ * DELETE /inventory/kpros-stock/hide/:key - 숨긴 항목 복원
+ */
+inventory.delete("/kpros-stock/hide/:key", async (c) => {
+  if (!c.env.CACHE) return c.json({ status: "error", message: "KV 없음" }, 500);
+  const key = c.req.param("key");
+  const raw = await c.env.CACHE.get(KV_HIDDEN_KEY);
+  const hidden: string[] = raw ? JSON.parse(raw) : [];
+  const filtered = hidden.filter(k => k !== key);
+  await c.env.CACHE.put(KV_HIDDEN_KEY, JSON.stringify(filtered));
+  return c.json({ status: "success", message: "복원 완료" });
+});
+
+/**
+ * GET /inventory/kpros-stock/overrides - 현재 오버라이드/숨김 상태 조회
+ */
+inventory.get("/kpros-stock/overrides", async (c) => {
+  if (!c.env.CACHE) return c.json({ status: "success", data: { overrides: {}, hidden: [] } });
+  const overridesRaw = await c.env.CACHE.get(KV_OVERRIDES_KEY);
+  const hiddenRaw = await c.env.CACHE.get(KV_HIDDEN_KEY);
+  return c.json({
+    status: "success",
+    data: {
+      overrides: overridesRaw ? JSON.parse(overridesRaw) : {},
+      hidden: hiddenRaw ? JSON.parse(hiddenRaw) : [],
+    },
+  });
+});
+
+/**
+ * POST /inventory/kpros-stock/export-dropbox - 수동 Dropbox 엑셀 저장
+ */
+inventory.post("/kpros-stock/export-dropbox", async (c) => {
+  if (!isKprosConfigured(c.env)) return c.json({ status: "error", message: "KPROS 미설정" }, 400);
+  if (!isDropboxConfigured(c.env)) return c.json({ status: "error", message: "Dropbox 미설정" }, 400);
+
+  try {
+    const stockData = await getKprosStock(c.env, true);
+    if (!stockData.items?.length) return c.json({ status: "error", message: "재고 데이터 없음" }, 404);
+
+    // 오버라이드/숨김 적용
+    let items = stockData.items;
+    if (c.env.CACHE) {
+      const overridesRaw = await c.env.CACHE.get(KV_OVERRIDES_KEY);
+      const hiddenRaw = await c.env.CACHE.get(KV_HIDDEN_KEY);
+      const overrides: Record<string, any> = overridesRaw ? JSON.parse(overridesRaw) : {};
+      const hidden: string[] = hiddenRaw ? JSON.parse(hiddenRaw) : [];
+      items = items
+        .filter((item: any) => !hidden.includes(`${item.productIdx}-${item.warehouseIdx}`))
+        .map((item: any) => {
+          const key = `${item.productIdx}-${item.warehouseIdx}`;
+          return overrides[key] ? { ...item, ...overrides[key] } : item;
+        });
+    }
+
+    // KST 날짜+시간
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const dateStr = kstNow.toISOString().split('T')[0];
+    const timeStr = kstNow.toISOString().split('T')[1].substring(0, 5).replace(':', '');
+
+    const headers = ['품명', '창고', '재고량', '단위', '제조사', '브랜드'];
+    const rows = items.map((item: any) => [
+      item.productNm || '', item.warehouseNm || '', item.sumStockQty,
+      item.pkgUnitNm || '', item.manuNmList || '', item.braNmList || '',
+    ]);
+    const xlsxData = generateXlsx(headers, rows, `재고현황_${dateStr}`);
+
+    const dropboxToken = await getDropboxToken(c.env.CACHE!, c.env.DROPBOX_APP_KEY!, c.env.DROPBOX_APP_SECRET!);
+    if (!dropboxToken) return c.json({ status: "error", message: "Dropbox 인증 실패" }, 500);
+
+    const folderPath = `/AI업무폴더/E.재고현황`;
+    try { await createDropboxFolder(dropboxToken, folderPath); } catch {}
+
+    const filePath = `${folderPath}/${dateStr}_${timeStr}_재고현황.xlsx`;
+    const result = await uploadDropboxFile(dropboxToken, filePath, xlsxData);
+
+    return c.json({
+      status: "success",
+      data: { path: result.path, itemCount: items.length, size: result.size },
+    });
+  } catch (err: any) {
+    return c.json({ status: "error", message: err.message || "Dropbox 저장 실패" }, 500);
+  }
+});
+
+/**
+ * GET /inventory/stock-overview - 이카운트 ERP 실시간 재고 + 30일 입출고 변동
+ */
+inventory.get("/stock-overview", async (c) => {
+  const erpStatus = getERPStatus(c.env);
+  if (!erpStatus.configured) {
+    return c.json({ status: "error", message: "이카운트 ERP 인증 정보가 설정되지 않았습니다" }, 400);
+  }
+
+  // KV 캐시 확인 (5분 TTL)
+  const CACHE_KEY = "ecount:stock_overview";
+  if (c.env.CACHE && c.req.query("refresh") !== "true") {
+    const cached = await c.env.CACHE.get(CACHE_KEY, "json") as any;
+    if (cached) {
+      return c.json({ status: "success", data: { ...cached, cached: true } });
+    }
+  }
+
+  // 30일 전 날짜 계산
+  const now = new Date();
+  const today = now.toISOString().split("T")[0].replace(/-/g, "");
+  const d30 = new Date(now);
+  d30.setDate(d30.getDate() - 30);
+  const from30 = d30.toISOString().split("T")[0].replace(/-/g, "");
+
+  const errors: string[] = [];
+
+  // 4개 API 병렬 호출
+  const [invResult, salesResult, purchasesResult, productsResult] = await Promise.allSettled([
+    getEcountInventoryByWarehouse(c.env),
+    getEcountSales(c.env, from30, today),
+    getEcountPurchases(c.env, from30, today),
+    getEcountProducts(c.env),
+  ]);
+
+  // 결과 추출
+  const inventoryItems2 = invResult.status === "fulfilled" ? invResult.value.items : [];
+  if (invResult.status === "rejected") errors.push(`재고 조회 실패: ${invResult.reason?.message || "unknown"}`);
+
+  const salesItems = salesResult.status === "fulfilled" ? salesResult.value.items : [];
+  if (salesResult.status === "rejected") errors.push(`판매 조회 실패: ${salesResult.reason?.message || "unknown"}`);
+
+  const purchaseItems = purchasesResult.status === "fulfilled" ? purchasesResult.value.items : [];
+  if (purchasesResult.status === "rejected") errors.push(`구매 조회 실패: ${purchasesResult.reason?.message || "unknown"}`);
+
+  const productItems = productsResult.status === "fulfilled" ? productsResult.value.items : [];
+  if (productsResult.status === "rejected") errors.push(`품목 조회 실패: ${productsResult.reason?.message || "unknown"}`);
+
+  // 품목 정보 맵
+  const productMap = new Map<string, { unit: string; name: string }>();
+  for (const p of productItems) {
+    productMap.set(p.PROD_CD, { unit: p.UNIT || "", name: p.PROD_DES || "" });
+  }
+
+  // 판매(출고) 합계 맵: PROD_CD:WH_CD → 수량합계
+  const salesMap = new Map<string, number>();
+  for (const s of salesItems) {
+    const key = `${s.PROD_CD}:${s.WH_CD || ""}`;
+    salesMap.set(key, (salesMap.get(key) || 0) + (parseFloat(s.QTY) || 0));
+  }
+
+  // 구매(입고) 합계 맵
+  const purchasesMap = new Map<string, number>();
+  for (const p of purchaseItems) {
+    const key = `${p.PROD_CD}:${p.WH_CD || ""}`;
+    purchasesMap.set(key, (purchasesMap.get(key) || 0) + (parseFloat(p.QTY) || 0));
+  }
+
+  // items 생성
+  const items = inventoryItems2.map((inv) => {
+    const key = `${inv.PROD_CD}:${inv.WH_CD || ""}`;
+    const balQty = parseFloat(inv.BAL_QTY) || 0;
+    const inQty30d = purchasesMap.get(key) || 0;
+    const outQty30d = salesMap.get(key) || 0;
+    const prodInfo = productMap.get(inv.PROD_CD);
+    return {
+      prodCd: inv.PROD_CD,
+      prodDes: inv.PROD_DES || prodInfo?.name || inv.PROD_CD,
+      whCd: inv.WH_CD || "",
+      whDes: inv.WH_DES || "",
+      unit: inv.UNIT || prodInfo?.unit || "",
+      balQty,
+      inQty30d: Math.round(inQty30d * 100) / 100,
+      outQty30d: Math.round(outQty30d * 100) / 100,
+      netChange: Math.round((inQty30d - outQty30d) * 100) / 100,
+    };
+  });
+
+  // 창고 요약
+  const warehouseAgg = new Map<string, { whDes: string; itemCount: number; totalQty: number }>();
+  for (const item of items) {
+    const wh = warehouseAgg.get(item.whCd) || { whDes: item.whDes, itemCount: 0, totalQty: 0 };
+    wh.itemCount++;
+    wh.totalQty += item.balQty;
+    warehouseAgg.set(item.whCd, wh);
+  }
+  const warehouses = Array.from(warehouseAgg.entries()).map(([whCd, d]) => ({
+    whCd, whDes: d.whDes, itemCount: d.itemCount, totalQty: Math.round(d.totalQty * 100) / 100,
+  }));
+
+  // 전체 통계
+  const uniqueProducts = new Set(items.map((i) => i.prodCd));
+  const stats = {
+    totalProducts: uniqueProducts.size,
+    totalBalQty: Math.round(items.reduce((s, i) => s + i.balQty, 0) * 100) / 100,
+    warehouseCount: warehouses.length,
+    totalIn30d: Math.round(items.reduce((s, i) => s + i.inQty30d, 0) * 100) / 100,
+    totalOut30d: Math.round(items.reduce((s, i) => s + i.outQty30d, 0) * 100) / 100,
+    zeroStockCount: items.filter((i) => i.balQty === 0).length,
+  };
+
+  const payload = {
+    stats,
+    warehouses,
+    items,
+    fetchedAt: new Date().toISOString(),
+    cached: false,
+    errors,
+  };
+
+  // KV 캐시 저장 (5분)
+  if (c.env.CACHE) {
+    try {
+      await c.env.CACHE.put(CACHE_KEY, JSON.stringify(payload), { expirationTtl: 300 });
+    } catch { /* cache write failure is non-critical */ }
+  }
+
+  return c.json({ status: "success", data: payload });
 });
 
 /**

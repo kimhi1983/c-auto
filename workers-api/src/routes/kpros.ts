@@ -370,84 +370,14 @@ kpros.post("/companies/debug-crawl", async (c) => {
 });
 
 /**
- * POST /companies/sync-kpros - KPROS에서 거래처 동기화
+ * POST /companies/sync-kpros - KPROS 거래처 동기화 (비활성화)
  */
 kpros.post("/companies/sync-kpros", async (c) => {
-  if (!isKprosConfigured(c.env)) {
-    return c.json({ status: "error", message: "KPROS 인증 정보 미설정" }, 400);
-  }
-
-  const db = drizzle(c.env.DB);
-  let created = 0;
-  let updated = 0;
-
-  try {
-    const kprosData = await getKprosCompanies(c.env, true);
-
-    if (kprosData.items.length === 0) {
-      return c.json({
-        status: "success",
-        data: { total: 0, created: 0, updated: 0 },
-        message: "KPROS에서 가져온 거래처 데이터가 없습니다 (권한 확인 필요)",
-      });
-    }
-
-    for (const kc of kprosData.items) {
-      const [existing] = await db
-        .select()
-        .from(companies)
-        .where(eq(companies.kprosIdx, kc.companyIdx))
-        .limit(1);
-
-      if (existing) {
-        await db
-          .update(companies)
-          .set({
-            companyNm: kc.companyNm || existing.companyNm,
-            companyCd: kc.companyCd || existing.companyCd,
-            ceoNm: kc.ceoNm || existing.ceoNm,
-            bizNo: kc.bizNo || existing.bizNo,
-            tel: kc.tel || existing.tel,
-            fax: kc.fax || existing.fax,
-            email: kc.email || existing.email,
-            addr: kc.addr || existing.addr,
-            memo: kc.memo || existing.memo,
-            managerNm: kc.managerNm || existing.managerNm,
-            managerTel: kc.managerTel || existing.managerTel,
-            managerEmail: kc.managerEmail || existing.managerEmail,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(companies.id, existing.id));
-        updated++;
-      } else {
-        await db.insert(companies).values({
-          companyCd: kc.companyCd || null,
-          companyNm: kc.companyNm,
-          ceoNm: kc.ceoNm,
-          bizNo: kc.bizNo,
-          tel: kc.tel,
-          fax: kc.fax,
-          email: kc.email,
-          addr: kc.addr,
-          memo: kc.memo,
-          managerNm: kc.managerNm,
-          managerTel: kc.managerTel,
-          managerEmail: kc.managerEmail,
-          kprosIdx: kc.companyIdx,
-        });
-        created++;
-      }
-    }
-
-    return c.json({
-      status: "success",
-      data: { total: kprosData.totalCount, created, updated },
-      message: `KPROS 동기화 완료: 신규 ${created}, 업데이트 ${updated}`,
-    });
-  } catch (e: any) {
-    console.error("[KPROS Sync]", e.message);
-    return c.json({ status: "error", message: e.message }, 500);
-  }
+  return c.json({
+    status: "error",
+    message: "KPROS 실시간 동기화가 비활성화되었습니다. D1 아카이브 데이터를 사용하세요.",
+    archived: true,
+  }, 403);
 });
 
 export default kpros;

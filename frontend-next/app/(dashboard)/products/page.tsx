@@ -56,12 +56,11 @@ const SOURCE_COLORS: Record<string, string> = {
 }
 
 // -- 탭 정의 --
-type TabKey = 'all' | 'active' | 'ecount' | 'kpros' | 'manual'
+type TabKey = 'all' | 'active' | 'ecount' | 'manual'
 const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'all', label: '전체', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4' },
   { key: 'active', label: '활성', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
   { key: 'ecount', label: '이카운트', icon: 'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z' },
-  { key: 'kpros', label: 'KPROS', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
   { key: 'manual', label: '직접등록', icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z' },
 ]
 
@@ -91,7 +90,6 @@ export default function ProductsPage() {
   const [syncing, setSyncing] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [syncMsg, setSyncMsg] = useState<{ type: 'success' | 'warning' | 'info'; text: string } | null>(null)
-  const [showSyncMenu, setShowSyncMenu] = useState(false)
 
   // -- 캐시 상태 --
   const [usingCache, setUsingCache] = useState(false)
@@ -104,7 +102,6 @@ export default function ProductsPage() {
       all: all.length,
       active: all.filter(p => p.isActive).length,
       ecount: all.filter(p => p.source === 'ecount').length,
-      kpros: all.filter(p => p.source === 'kpros').length,
       manual: all.filter(p => p.source === 'manual').length,
     }
   }, [allProducts])
@@ -156,7 +153,7 @@ export default function ProductsPage() {
       } else {
         params.set('active', 'false')
       }
-      if (activeTab === 'ecount' || activeTab === 'kpros' || activeTab === 'manual') {
+      if (activeTab === 'ecount' || activeTab === 'manual') {
         params.set('source', activeTab)
       }
       if (classFilter) {
@@ -182,14 +179,6 @@ export default function ProductsPage() {
 
   useEffect(() => { fetchProducts() }, [fetchProducts])
   useEffect(() => { fetchAllProducts() }, [fetchAllProducts])
-
-  // -- 동기화 드롭다운 외부 클릭 닫기 --
-  useEffect(() => {
-    if (!showSyncMenu) return
-    const handleClick = () => setShowSyncMenu(false)
-    document.addEventListener('click', handleClick)
-    return () => document.removeEventListener('click', handleClick)
-  }, [showSyncMenu])
 
   // -- 핸들러 --
   const handleSave = async () => {
@@ -229,19 +218,18 @@ export default function ProductsPage() {
     } catch (e: any) { setError(e.message) }
   }
 
-  const handleSync = async (type: 'ecount' | 'kpros') => {
+  const handleSync = async (type: 'ecount') => {
     setSyncing(true)
     setError('')
-    setShowSyncMenu(false)
     try {
       const res = await fetch(apiUrl(`/api/v1/products/sync-${type}`), { method: 'POST', headers: authHeaders() })
       const json = await res.json()
       if (json.status === 'success') {
         fetchProducts()
-        fetchAllProducts()  // 캐시도 자동 갱신됨
+        fetchAllProducts()
         setUsingCache(false)
         setCacheAge('')
-        setSyncMsg({ type: 'success', text: json.message || `${type === 'ecount' ? '이카운트' : 'KPROS'} 동기화 완료` })
+        setSyncMsg({ type: 'success', text: json.message || '이카운트 동기화 완료' })
         setTimeout(() => setSyncMsg(null), 5000)
       } else { setError(json.message) }
     } catch (e: any) { setError(e.message) }
@@ -321,7 +309,7 @@ export default function ProductsPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-slate-900">품목 관리</h1>
-              <p className="text-sm text-slate-500 mt-1">이카운트 ERP / KPROS 품목 통합 관리</p>
+              <p className="text-sm text-slate-500 mt-1">이카운트 ERP 품목 통합 관리</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -334,40 +322,16 @@ export default function ProductsPage() {
                 </svg>
                 {exporting ? '내보내기...' : 'CSV'}
               </button>
-              {/* 동기화 드롭다운 */}
-              <div className="relative">
-                <button
-                  onClick={e => { e.stopPropagation(); setShowSyncMenu(!showSyncMenu) }}
-                  disabled={syncing}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  <svg className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  동기화
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {showSyncMenu && (
-                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl border border-slate-200 shadow-lg z-20 py-1">
-                    <button
-                      onClick={() => handleSync('ecount')}
-                      className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                    >
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      이카운트 동기화
-                    </button>
-                    <button
-                      onClick={() => handleSync('kpros')}
-                      className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                    >
-                      <span className="w-2 h-2 rounded-full bg-cyan-500" />
-                      KPROS 동기화
-                    </button>
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={() => handleSync('ecount')}
+                disabled={syncing}
+                className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <svg className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {syncing ? '동기화 중...' : '이카운트 동기화'}
+              </button>
               <button
                 onClick={openCreate}
                 className="px-4 py-2 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition-colors flex items-center gap-1.5"

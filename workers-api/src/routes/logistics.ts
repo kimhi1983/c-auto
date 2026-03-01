@@ -11,7 +11,6 @@ import {
 } from '../db/schema';
 import { authMiddleware } from '../middleware/auth';
 import {
-  isKprosConfigured,
   getKprosPurchases, getKprosDeliveries, getKprosInbound, getKprosOutbound,
   getKprosWarehouseIn, getKprosWarehouseOut, getKprosCoa,
 } from '../services/kpros';
@@ -343,61 +342,21 @@ logistics.get('/coa', async (c) => {
 // ═══════════════════════════════════════════
 
 logistics.post('/sync', async (c) => {
-  if (!isKprosConfigured(c.env)) {
-    return c.json({ status: 'error', message: 'KPROS 인증 정보 미설정' }, 400);
-  }
-
-  const results: Record<string, { total: number; synced: number; error?: string }> = {};
-
-  const modules = [
-    { key: 'purchases', fn: () => syncPurchases(c.env) },
-    { key: 'deliveries', fn: () => syncDeliveries(c.env) },
-    { key: 'inbound', fn: () => syncInbound(c.env) },
-    { key: 'outbound', fn: () => syncOutbound(c.env) },
-    { key: 'warehouseIn', fn: () => syncWarehouseIn(c.env) },
-    { key: 'warehouseOut', fn: () => syncWarehouseOut(c.env) },
-    { key: 'coa', fn: () => syncCoa(c.env) },
-  ];
-
-  for (const mod of modules) {
-    try {
-      results[mod.key] = await mod.fn();
-    } catch (e: any) {
-      results[mod.key] = { total: 0, synced: 0, error: e.message };
-    }
-  }
-
-  return c.json({ status: 'success', data: results });
+  // 아카이브 완료 후 실시간 동기화 비활성화
+  return c.json({
+    status: 'error',
+    message: 'KPROS 실시간 동기화가 비활성화되었습니다. 아카이브 데이터를 사용하세요. (POST /archive로 최종 동기화 가능)',
+    archived: true,
+  }, 403);
 });
 
-// 개별 모듈 동기화
+// 개별 모듈 동기화 (비활성화)
 logistics.post('/sync/:module', async (c) => {
-  if (!isKprosConfigured(c.env)) {
-    return c.json({ status: 'error', message: 'KPROS 인증 정보 미설정' }, 400);
-  }
-
-  const mod = c.req.param('module');
-  const syncMap: Record<string, (env: Env) => Promise<{ total: number; synced: number }>> = {
-    purchases: syncPurchases,
-    deliveries: syncDeliveries,
-    inbound: syncInbound,
-    outbound: syncOutbound,
-    warehouseIn: syncWarehouseIn,
-    warehouseOut: syncWarehouseOut,
-    coa: syncCoa,
-  };
-
-  const syncFn = syncMap[mod];
-  if (!syncFn) {
-    return c.json({ status: 'error', message: `알 수 없는 모듈: ${mod}` }, 400);
-  }
-
-  try {
-    const result = await syncFn(c.env);
-    return c.json({ status: 'success', data: result });
-  } catch (e: any) {
-    return c.json({ status: 'error', message: e.message }, 500);
-  }
+  return c.json({
+    status: 'error',
+    message: 'KPROS 실시간 동기화가 비활성화되었습니다. D1 아카이브 데이터를 사용하세요.',
+    archived: true,
+  }, 403);
 });
 
 // ═══════════════════════════════════════════

@@ -110,7 +110,6 @@ export default function KprosPage() {
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null)
 
   // ── 액션 ──
-  const [syncing, setSyncing] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [ecountMsg, setEcountMsg] = useState<{ type: 'success' | 'warning' | 'info'; text: string } | null>(null)
   const [usingCache, setUsingCache] = useState(false)
@@ -241,22 +240,6 @@ export default function KprosPage() {
     } catch (e: any) { setError(e.message) }
   }
 
-  const handleSyncKpros = async () => {
-    setSyncing(true)
-    setError('')
-    try {
-      const res = await fetch(apiUrl('/api/v1/kpros/companies/sync-kpros'), { method: 'POST', headers: authHeaders() })
-      const json = await res.json()
-      if (json.status === 'success') {
-        fetchCompanies()
-        fetchAllCompanies()
-        setEcountMsg({ type: 'success', text: json.message || 'KPROS 동기화 완료' })
-        setTimeout(() => setEcountMsg(null), 5000)
-      } else { setError(json.message) }
-    } catch (e: any) { setError(e.message) }
-    finally { setSyncing(false) }
-  }
-
   const handleExportCSV = async () => {
     setExporting(true)
     try {
@@ -332,7 +315,7 @@ export default function KprosPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-slate-900">거래처 관리</h1>
-              <p className="text-sm text-slate-500 mt-1">KPROS / 이카운트 ERP 거래처 통합 관리</p>
+              <p className="text-sm text-slate-500 mt-1">거래처 통합 관리 (이카운트 ERP 연동)</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -344,16 +327,6 @@ export default function KprosPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 {exporting ? '내보내기...' : 'CSV'}
-              </button>
-              <button
-                onClick={handleSyncKpros}
-                disabled={syncing}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              >
-                <svg className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                동기화
               </button>
               <button
                 onClick={openCreate}

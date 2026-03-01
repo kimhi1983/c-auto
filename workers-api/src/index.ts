@@ -24,8 +24,9 @@ import memoryRouter from './routes/memory';
 import productsRouter from './routes/products';
 import coaDocsRouter from './routes/coa-documents';
 import { getAIEngineStatus, classifyEmailAdvanced } from './services/ai';
+import { isKprosConfigured, getKprosStock } from './services/kpros';
 import { isGmailConfigured, getGmailAccessToken, listGmailMessagesAll, getGmailMessage, parseGmailMessage, downloadGmailAttachment, base64UrlToBase64 } from './services/gmail';
-import { isDropboxConfigured, getDropboxAccessToken as getDropboxToken, uploadAttachmentToDropbox } from './services/dropbox';
+import { isDropboxConfigured, getDropboxAccessToken as getDropboxToken, uploadAttachmentToDropbox, uploadDropboxFile, createDropboxFolder } from './services/dropbox';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq, lt, like, desc, sql } from 'drizzle-orm';
 import { emails, emailAttachments, emailApprovals } from './db/schema';
@@ -341,9 +342,103 @@ async function scheduledEmailFetch(env: Env) {
   }
 }
 
+// ═══════════════════════════════════════════
+// Cron: 매일 KPROS 재고 → Excel(xlsx) → Dropbox 자동 저장
+// ═══════════════════════════════════════════
+
+import { generateXlsx } from './utils/xlsx-writer';
+
+/**
+ * 재고 → Excel(xlsx) → Dropbox 업로드 핵심 로직 (cron + 수동 공용)
+ */
+async function exportInventoryToDropbox(env: Env): Promise<{ path: string; itemCount: number; size: number }> {
+  const stockData = await getKprosStock(env, true);
+  if (!stockData.items || stockData.items.length === 0) {
+    throw new Error('재고 데이터 없음');
+  }
+
+  // 오버라이드/숨김 적용
+  let items = stockData.items;
+  if (env.CACHE) {
+    const overridesRaw = await env.CACHE.get('kpros:stock_overrides');
+    const hiddenRaw = await env.CACHE.get('kpros:stock_hidden');
+    const overrides: Record<string, any> = overridesRaw ? JSON.parse(overridesRaw) : {};
+    const hidden: string[] = hiddenRaw ? JSON.parse(hiddenRaw) : [];
+
+    items = items
+      .filter(item => !hidden.includes(`${item.productIdx}-${item.warehouseIdx}`))
+      .map(item => {
+        const key = `${item.productIdx}-${item.warehouseIdx}`;
+        return overrides[key] ? { ...item, ...overrides[key] } : item;
+      });
+  }
+
+  // KST 날짜
+  const kstDate = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const dateStr = kstDate.toISOString().split('T')[0];
+
+  // Excel 생성
+  const headers = ['품명', '창고', '재고량', '단위', '제조사', '브랜드'];
+  const rows = items.map(item => [
+    item.productNm || '',
+    item.warehouseNm || '',
+    item.sumStockQty,
+    item.pkgUnitNm || '',
+    item.manuNmList || '',
+    item.braNmList || '',
+  ]);
+  const xlsxData = generateXlsx(headers, rows, `재고현황_${dateStr}`);
+
+  // Dropbox 업로드
+  const dropboxToken = await getDropboxToken(
+    env.CACHE!, env.DROPBOX_APP_KEY!, env.DROPBOX_APP_SECRET!
+  );
+  if (!dropboxToken) throw new Error('Dropbox 토큰 없음');
+
+  const folderPath = `/AI업무폴더/E.재고현황`;
+  try { await createDropboxFolder(dropboxToken, folderPath); } catch {}
+
+  const filePath = `${folderPath}/${dateStr}_재고현황.xlsx`;
+  const result = await uploadDropboxFile(dropboxToken, filePath, xlsxData);
+
+  return { path: result.path, itemCount: items.length, size: result.size };
+}
+
+async function scheduledInventoryExport(env: Env) {
+  // KST = UTC+9, 매일 20:00 KST (= 11:00 UTC) 실행
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  if (utcHour !== 11 || utcMinute > 4) return; // 11:00~11:04 UTC 윈도우
+
+  if (!isKprosConfigured(env) || !isDropboxConfigured(env)) return;
+
+  // KV 중복 실행 방지
+  const kstDate = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const dateStr = kstDate.toISOString().split('T')[0];
+  const kvFlag = `inventory:export:${dateStr}`;
+
+  if (env.CACHE) {
+    const done = await env.CACHE.get(kvFlag);
+    if (done) return;
+  }
+
+  try {
+    const result = await exportInventoryToDropbox(env);
+
+    if (env.CACHE) {
+      await env.CACHE.put(kvFlag, 'done', { expirationTtl: 86400 });
+    }
+    console.log(`[Cron][재고] Dropbox 저장 완료: ${result.path} (${result.itemCount}건, ${result.size}B)`);
+  } catch (err: any) {
+    console.error('[Cron][재고] 저장 실패:', err.message);
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(scheduledEmailFetch(env));
+    ctx.waitUntil(scheduledInventoryExport(env));
   },
 };

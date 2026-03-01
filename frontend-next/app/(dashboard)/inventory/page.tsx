@@ -97,6 +97,17 @@ export default function InventoryPage() {
   const [usingCache, setUsingCache] = useState(false);
   const [cacheAge, setCacheAge] = useState('');
 
+  // ── 상세 패널 + 수정 모달 상태 ──
+  const [selectedItem, setSelectedItem] = useState<KprosStockItem | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editItem, setEditItem] = useState<KprosStockItem | null>(null);
+  const [editFields, setEditFields] = useState({ productNm: '', sumStockQty: 0, pkgUnitNm: '', manuNmList: '', braNmList: '' });
+  const [editSaving, setEditSaving] = useState(false);
+
+  // ── Dropbox 저장 상태 ──
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<string | null>(null);
+
   // ── 판매분석 상태 ──
   const [salesPhase, setSalesPhase] = useState<SalesPhase>('upload');
   const [salesFileName, setSalesFileName] = useState('');
@@ -195,6 +206,89 @@ export default function InventoryPage() {
   const sortIcon = (field: SortField) => {
     if (sortField !== field) return <span className="text-slate-300 ml-1">↕</span>;
     return <span className="text-slate-700 ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  };
+
+  // ── 수정/삭제 핸들러 ──
+  const openEditModal = (item: KprosStockItem) => {
+    setEditItem(item);
+    setEditFields({
+      productNm: item.productNm,
+      sumStockQty: item.sumStockQty,
+      pkgUnitNm: item.pkgUnitNm,
+      manuNmList: item.manuNmList || '',
+      braNmList: item.braNmList || '',
+    });
+    setShowEditModal(true);
+  };
+
+  const saveEdit = async () => {
+    if (!editItem) return;
+    setEditSaving(true);
+    try {
+      const res = await fetch(apiUrl('/api/v1/inventory/kpros-stock/override'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          productIdx: editItem.productIdx,
+          warehouseIdx: editItem.warehouseIdx,
+          fields: {
+            productNm: editFields.productNm,
+            sumStockQty: Number(editFields.sumStockQty),
+            pkgUnitNm: editFields.pkgUnitNm,
+            manuNmList: editFields.manuNmList || null,
+            braNmList: editFields.braNmList || null,
+          },
+        }),
+      });
+      if (res.ok) {
+        setShowEditModal(false);
+        setEditItem(null);
+        setSelectedItem(null);
+        fetchKprosStock(true);
+      }
+    } catch { /* ignore */ }
+    setEditSaving(false);
+  };
+
+  const deleteItem = async (item: KprosStockItem) => {
+    if (!confirm(`"${item.productNm}" 항목을 비활성화하시겠습니까?`)) return;
+    setEditSaving(true);
+    try {
+      const res = await fetch(apiUrl('/api/v1/inventory/kpros-stock/hide'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ productIdx: item.productIdx, warehouseIdx: item.warehouseIdx }),
+      });
+      if (res.ok) {
+        setShowEditModal(false);
+        setEditItem(null);
+        setSelectedItem(null);
+        fetchKprosStock(true);
+      }
+    } catch { /* ignore */ }
+    setEditSaving(false);
+  };
+
+  // ── Dropbox 엑셀 저장 ──
+  const exportToDropbox = async () => {
+    setExporting(true);
+    setExportResult(null);
+    try {
+      const res = await fetch(apiUrl('/api/v1/inventory/kpros-stock/export-dropbox'), {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const json = await res.json();
+      if (json.status === 'success') {
+        setExportResult(`저장 완료: ${json.data.path} (${json.data.itemCount}건)`);
+      } else {
+        setExportResult(`실패: ${json.message}`);
+      }
+    } catch {
+      setExportResult('네트워크 오류');
+    }
+    setExporting(false);
+    setTimeout(() => setExportResult(null), 5000);
   };
 
   // ── 판매현황 엑셀 파싱 ──
@@ -427,30 +521,6 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* ── KPROS 통계 카드 (KPROS 탭) ── */}
-      {activeTab === 'kpros' && kprosData && !kprosLoading && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-fadeInUp">
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
-            <div className="text-xs text-slate-500 font-medium mb-1">총 품목</div>
-            <div className="text-2xl font-bold text-slate-900">{kprosData.totalCount}<span className="text-sm font-normal text-slate-400 ml-1">건</span></div>
-            <div className="text-xs text-slate-400 mt-1">재고없음 {kprosData.zeroStockCount}건</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
-            <div className="text-xs text-slate-500 font-medium mb-1">총 재고량</div>
-            <div className="text-2xl font-bold text-slate-900">{kprosData.totalQty.toLocaleString()}<span className="text-sm font-normal text-slate-400 ml-1">kg</span></div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
-            <div className="text-xs text-slate-500 font-medium mb-1">창고</div>
-            <div className="text-2xl font-bold text-slate-900">{kprosData.warehouses.length}<span className="text-sm font-normal text-slate-400 ml-1">개</span></div>
-            <div className="text-xs text-slate-400 mt-1">{kprosData.warehouses.map(w => w.name).join(', ')}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-4">
-            <div className="text-xs text-slate-500 font-medium mb-1">브랜드</div>
-            <div className="text-2xl font-bold text-slate-900">{kprosData.brands.length}<span className="text-sm font-normal text-slate-400 ml-1">개</span></div>
-          </div>
-        </div>
-      )}
-
       {/* ── 안전재고 파라미터 안내 (판매분석 탭) ── */}
       {activeTab === 'sales' && (
         <div className="grid md:grid-cols-2 gap-4 animate-fadeInUp">
@@ -606,56 +676,201 @@ export default function InventoryPage() {
                     />
                   </div>
                 </div>
+                <button
+                  onClick={exportToDropbox}
+                  disabled={exporting}
+                  className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
+                >
+                  {exporting ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                  )}
+                  Dropbox 저장
+                </button>
               </div>
 
-              <div className="text-xs text-slate-400">
-                {filteredItems.length}건 표시
-                {searchQuery && ` (검색: "${searchQuery}")`}
-                {selectedWarehouse !== 'all' && ` · ${selectedWarehouse}`}
-              </div>
-
-              {/* 재고 테이블 */}
-              <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden">
-                <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50 sticky top-0 z-10">
-                      <tr className="border-b border-slate-200">
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('productNm')}>
-                          품명{sortIcon('productNm')}
-                        </th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('warehouseNm')}>
-                          창고{sortIcon('warehouseNm')}
-                        </th>
-                        <th className="px-4 py-3 text-right font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('sumStockQty')}>
-                          재고량{sortIcon('sumStockQty')}
-                        </th>
-                        <th className="px-4 py-3 text-center font-semibold text-slate-600">단위</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600">제조사</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('braNmList')}>
-                          브랜드{sortIcon('braNmList')}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredItems.map((item) => (
-                        <tr key={`${item.productIdx}-${item.warehouseIdx}`} className="hover:bg-slate-50 transition">
-                          <td className="px-4 py-2.5 text-slate-900 font-medium">{item.productNm}</td>
-                          <td className="px-4 py-2.5">
-                            <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-md">{item.warehouseNm}</span>
-                          </td>
-                          <td className={`px-4 py-2.5 text-right font-semibold tabular-nums ${
-                            item.sumStockQty === 0 ? 'text-red-500' : 'text-slate-900'
-                          }`}>
-                            {item.sumStockQty.toLocaleString()}
-                          </td>
-                          <td className="px-4 py-2.5 text-center text-slate-500">{item.pkgUnitNm}</td>
-                          <td className="px-4 py-2.5 text-slate-600 text-xs">{item.manuNmList || '-'}</td>
-                          <td className="px-4 py-2.5 text-slate-600 text-xs">{item.braNmList || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-slate-400">
+                  {filteredItems.length}건 표시
+                  {searchQuery && ` (검색: "${searchQuery}")`}
+                  {selectedWarehouse !== 'all' && ` · ${selectedWarehouse}`}
                 </div>
+                {exportResult && (
+                  <div className={`text-xs px-3 py-1 rounded-lg ${exportResult.startsWith('저장') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                    {exportResult}
+                  </div>
+                )}
+              </div>
+
+              {/* 재고 테이블 + 우측 상세 패널 */}
+              <div className="flex gap-0 rounded-2xl border border-slate-200/80 overflow-hidden bg-white">
+                {/* 테이블 영역 */}
+                <div className="flex-1 min-w-0">
+                  <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 sticky top-0 z-10">
+                        <tr className="border-b border-slate-200">
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('productNm')}>
+                            품명{sortIcon('productNm')}
+                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('warehouseNm')}>
+                            창고{sortIcon('warehouseNm')}
+                          </th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('sumStockQty')}>
+                            재고량{sortIcon('sumStockQty')}
+                          </th>
+                          <th className="px-4 py-3 text-center font-semibold text-slate-600">단위</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">제조사</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer select-none hover:text-slate-900" onClick={() => toggleSort('braNmList')}>
+                            브랜드{sortIcon('braNmList')}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredItems.map((item) => (
+                          <tr key={`${item.productIdx}-${item.warehouseIdx}`} onClick={() => setSelectedItem(item)}
+                            className={`hover:bg-slate-50 transition cursor-pointer ${selectedItem && selectedItem.productIdx === item.productIdx && selectedItem.warehouseIdx === item.warehouseIdx ? 'bg-brand-50' : ''}`}>
+                            <td className="px-4 py-2.5 text-slate-900 font-medium">{item.productNm}</td>
+                            <td className="px-4 py-2.5">
+                              <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-md">{item.warehouseNm}</span>
+                            </td>
+                            <td className={`px-4 py-2.5 text-right font-semibold tabular-nums ${
+                              item.sumStockQty === 0 ? 'text-red-500' : 'text-slate-900'
+                            }`}>
+                              {item.sumStockQty.toLocaleString()}
+                            </td>
+                            <td className="px-4 py-2.5 text-center text-slate-500">{item.pkgUnitNm}</td>
+                            <td className="px-4 py-2.5 text-slate-600 text-xs">{item.manuNmList || '-'}</td>
+                            <td className="px-4 py-2.5 text-slate-600 text-xs">{item.braNmList || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 우측 상세 패널 */}
+                {selectedItem && (
+                  <div className="w-[380px] flex-shrink-0 border-l border-slate-200 bg-white overflow-y-auto max-h-[600px] flex flex-col">
+                    {/* 패널 헤더 */}
+                    <div className="flex-shrink-0 px-5 py-4 border-b border-slate-100">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-lg font-bold text-slate-900 truncate">{selectedItem.productNm}</h3>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <span className="inline-block px-2 py-0.5 rounded-md text-xs font-medium bg-green-50 text-green-700">KPROS</span>
+                            <span className="inline-flex items-center gap-1 text-xs text-green-600">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />활성
+                            </span>
+                          </div>
+                        </div>
+                        <button onClick={() => setSelectedItem(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 패널 내용 */}
+                    <div className="flex-1 px-5 py-4 space-y-5 overflow-y-auto">
+                      {/* 기본정보 */}
+                      <div>
+                        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">기본정보</div>
+                        <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
+                          <div className="flex items-start py-2">
+                            <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">품명</span>
+                            <span className="text-sm text-slate-700 flex-1 break-all font-medium">{selectedItem.productNm}</span>
+                          </div>
+                          <div className="flex items-start py-2">
+                            <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">창고</span>
+                            <span className="text-sm text-slate-700 flex-1">{selectedItem.warehouseNm}</span>
+                          </div>
+                          <div className="flex items-start py-2">
+                            <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">단위</span>
+                            <span className="text-sm text-slate-700 flex-1">{selectedItem.pkgUnitNm || <span className="text-slate-300">-</span>}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 재고 정보 */}
+                      <div>
+                        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">재고 정보</div>
+                        <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
+                          <div className="flex items-start py-2">
+                            <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">재고량</span>
+                            <span className={`text-sm font-bold ${selectedItem.sumStockQty === 0 ? 'text-red-500' : 'text-slate-900'}`}>
+                              {selectedItem.sumStockQty.toLocaleString()} {selectedItem.pkgUnitNm}
+                            </span>
+                          </div>
+                          <div className="flex items-start py-2">
+                            <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">상태</span>
+                            <span className={`text-sm font-medium ${selectedItem.sumStockQty === 0 ? 'text-red-500' : selectedItem.sumStockQty < 100 ? 'text-orange-500' : 'text-green-600'}`}>
+                              {selectedItem.sumStockQty === 0 ? '재고없음' : selectedItem.sumStockQty < 100 ? '재고부족' : '정상'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 분류 정보 */}
+                      {(selectedItem.braNmList || selectedItem.manuNmList) && (
+                        <div>
+                          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">분류 정보</div>
+                          <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
+                            <div className="flex items-start py-2">
+                              <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">브랜드</span>
+                              <span className="text-sm text-slate-700 flex-1 break-all">{selectedItem.braNmList || <span className="text-slate-300">-</span>}</span>
+                            </div>
+                            <div className="flex items-start py-2">
+                              <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">제조사</span>
+                              <span className="text-sm text-slate-700 flex-1 break-all">{selectedItem.manuNmList || <span className="text-slate-300">-</span>}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 부가정보 */}
+                      <div>
+                        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">부가정보</div>
+                        <div className="bg-slate-50/50 rounded-xl p-3 divide-y divide-slate-100">
+                          <div className="flex items-start py-2">
+                            <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">품목 ID</span>
+                            <span className="text-sm text-slate-700 flex-1">{selectedItem.productIdx}</span>
+                          </div>
+                          <div className="flex items-start py-2">
+                            <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">창고 ID</span>
+                            <span className="text-sm text-slate-700 flex-1">{selectedItem.warehouseIdx}</span>
+                          </div>
+                          {kprosData?.fetchedAt && (
+                            <div className="flex items-start py-2">
+                              <span className="text-xs text-slate-400 w-20 flex-shrink-0 pt-0.5">조회일</span>
+                              <span className="text-sm text-slate-700 flex-1">{new Date(kprosData.fetchedAt).toLocaleDateString('ko-KR')}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 하단 버튼 */}
+                    <div className="flex-shrink-0 px-5 py-4 border-t border-slate-100 flex gap-2">
+                      <button onClick={() => openEditModal(selectedItem)}
+                        className="flex-1 px-4 py-2.5 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition-colors flex items-center justify-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        수정
+                      </button>
+                      <button onClick={() => deleteItem(selectedItem)}
+                        className="px-4 py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors flex items-center justify-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        비활성화
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 창고별 요약 */}
@@ -714,6 +929,92 @@ export default function InventoryPage() {
                 </div>
               </div>
             </>
+          )}
+
+          {/* ── 수정 모달 (상단 오버레이) ── */}
+          {showEditModal && editItem && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-12 p-4" onClick={() => { setShowEditModal(false); setEditItem(null); }}>
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                {/* 모달 헤더 */}
+                <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-slate-900">재고 수정</h2>
+                  <button onClick={() => { setShowEditModal(false); setEditItem(null); }} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="px-6 py-5 space-y-4">
+                  {/* 기본 정보 */}
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">기본 정보</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">품명 <span className="text-red-500">*</span></label>
+                      <input type="text" value={editFields.productNm} onChange={e => setEditFields(f => ({ ...f, productNm: e.target.value }))}
+                        placeholder="품목명 입력"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">창고</label>
+                      <input type="text" value={editItem.warehouseNm} disabled
+                        className="w-full rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-500 cursor-not-allowed" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">단위</label>
+                      <input type="text" value={editFields.pkgUnitNm} onChange={e => setEditFields(f => ({ ...f, pkgUnitNm: e.target.value }))}
+                        placeholder="kg, 개 등"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">재고량</label>
+                      <input type="number" value={editFields.sumStockQty} onChange={e => setEditFields(f => ({ ...f, sumStockQty: Number(e.target.value) }))}
+                        placeholder="0"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">품목 ID</label>
+                      <input type="text" value={editItem.productIdx} disabled
+                        className="w-full rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-500 cursor-not-allowed" />
+                    </div>
+                  </div>
+
+                  {/* 분류 정보 */}
+                  <div className="border-t border-slate-100 pt-4">
+                    <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">분류 정보</div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">브랜드</label>
+                      <input type="text" value={editFields.braNmList} onChange={e => setEditFields(f => ({ ...f, braNmList: e.target.value }))}
+                        placeholder="브랜드명"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">제조사</label>
+                      <input type="text" value={editFields.manuNmList} onChange={e => setEditFields(f => ({ ...f, manuNmList: e.target.value }))}
+                        placeholder="제조사명"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 모달 하단 버튼 */}
+                <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                  <button onClick={() => { setShowEditModal(false); setEditItem(null); }}
+                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                    취소
+                  </button>
+                  <button onClick={saveEdit} disabled={editSaving}
+                    className="px-5 py-2.5 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition-colors disabled:opacity-50 flex items-center gap-2">
+                    {editSaving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                    수정
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}
